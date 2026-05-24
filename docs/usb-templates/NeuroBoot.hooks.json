@@ -1,0 +1,39 @@
+{
+  "_comment": "v3.0 W6-7 hooks template. Copy to <USB_root>/NeuroBoot.hooks.json or <USB_root>/NeuroBoot/hooks.json. All hooks run in PowerShell -NoProfile -NonInteractive. Default timeout 10s; clamped to [1, 60]. Only 'type: command' is supported. Remove this _comment key before use (extra keys are tolerated but noisy).",
+  "hooks": {
+    "SessionStart": [],
+
+    "_PreToolUse_example": [
+      {
+        "type": "command",
+        "command": "Write-Output 'sample PreToolUse hook fired'",
+        "matcher": "delete_path",
+        "timeout": 5
+      }
+    ],
+    "PreToolUse": [],
+
+    "_PostToolUse_example": [
+      {
+        "type": "command",
+        "command": "Add-Content -Path 'X:\\NeuroBoot\\logs\\tool-trace.log' -Value \"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') tool=$env:NEUROBOOT_TOOL_NAME success=$env:NEUROBOOT_TOOL_SUCCESS\""
+      }
+    ],
+    "PostToolUse": [],
+
+    "Stop": []
+  },
+
+  "_environment_vars_passed_to_hooks": {
+    "PreToolUse": ["NEUROBOOT_TOOL_NAME", "NEUROBOOT_TOOL_ARGS"],
+    "PostToolUse": ["NEUROBOOT_TOOL_NAME", "NEUROBOOT_TOOL_ARGS", "NEUROBOOT_TOOL_SUCCESS (1/0)", "NEUROBOOT_TOOL_RESULT (truncated 4 KB)"],
+    "SessionStart_and_Stop": "no env vars (no tool context at those moments)"
+  },
+
+  "_behavior_notes": {
+    "SessionStart": "stdout gets appended to system_prompt before first model turn; exit code logged only",
+    "PreToolUse": "non-zero exit BLOCKS the tool call - tool is not executed, agent sees (hook rejected) reason and decides what to do next; matcher (optional) does exact tool name match",
+    "PostToolUse": "exit code log-only - tool already ran, cannot undo; matcher same as PreToolUse",
+    "Stop": "fires before AgentEvent::Done; exit code log-only"
+  }
+}
