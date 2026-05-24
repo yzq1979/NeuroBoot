@@ -33,6 +33,11 @@ impl Tool for ListPartitions {
          - `Type`: Basic / GPT / MBR / IFS / Unknown 等\n\
          - `IsBoot` / `IsSystem` / `IsActive`: 启动标志位（System 分区是含 BCD 的；Boot 是含 Windows 文件夹的；这俩可能不在一个分区）\n\
          \n\
+         **Example output**: `[{\"DiskNumber\":0,\"PartitionNumber\":1,\"DriveLetter\":null,\
+         \"SizeGB\":0.1,\"Type\":\"GPT\",\"IsBoot\":false,\"IsSystem\":true,\"IsActive\":false},\
+         {\"DiskNumber\":0,\"PartitionNumber\":3,\"DriveLetter\":\"C\",\"SizeGB\":237.5,\
+         \"Type\":\"Basic\",\"IsBoot\":true,\"IsSystem\":false,\"IsActive\":false}]`\n\
+         \n\
          **Notes**: 跟 list_volumes 互补 —— 本工具看分区表层（GPT entries），list_volumes 看文件系统层（卷使用率）；\
          数据恢复 / 启动修复要先看本工具确定分区表是否完整。"
     }
@@ -68,5 +73,16 @@ ConvertTo-Json @(Get-Partition {disk_filter}-ErrorAction SilentlyContinue | Sele
         );
 
         run_ps_json_array(&script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListPartitions);
     }
 }

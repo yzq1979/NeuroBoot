@@ -152,3 +152,48 @@ impl Default for ToolRegistry {
         Self::new()
     }
 }
+
+/// v3.0 W1 description 重写约定的统一断言（仅测试构建可用）。
+///
+/// 检查项（4 必需 + 长度 + 命名）：
+/// 1. 必含 4 个 section marker：`**When to use**` / `**Parameters**` / `**Returns**` / `**Notes**`
+/// 2. 长度在 [200, 1500] 字符
+/// 3. name 为 snake_case（仅小写字母 + 下划线）
+/// 4. name 含至少一个下划线（verb_object 形式）
+///
+/// **Example output** 是推荐但非必须（输出复杂的工具应该有；list_disks 的 6
+/// 个详细单测仍保留作为示例参考）。每个工具的 tests 模块调用本函数即可。
+///
+/// 参考：[Anthropic: Writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents)
+#[cfg(test)]
+pub fn assert_v30_description_convention(tool: &dyn Tool) {
+    let desc = tool.description();
+    let name = tool.name();
+
+    // 1. 必需的 4 个 section marker
+    for marker in ["**When to use**", "**Parameters**", "**Returns**", "**Notes**"] {
+        assert!(
+            desc.contains(marker),
+            "[{name}] description missing required section `{marker}`"
+        );
+    }
+
+    // 2. 长度区间
+    let len = desc.chars().count();
+    assert!(
+        (200..=1500).contains(&len),
+        "[{name}] description length {len} out of band [200, 1500]"
+    );
+
+    // 3. name snake_case
+    assert!(
+        name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+        "[{name}] name must be snake_case (lowercase + underscore only)"
+    );
+
+    // 4. verb_object 含至少一个下划线
+    assert!(
+        name.contains('_'),
+        "[{name}] name should be verb_object form (snake_case with at least one underscore)"
+    );
+}

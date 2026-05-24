@@ -34,6 +34,11 @@ impl Tool for ListVolumes {
          - `UsedPct`: 已用 %（**> 90% 时该提示用户清理**）\n\
          - `HealthStatus`: Healthy / Warning / Unhealthy / Unknown\n\
          \n\
+         **Example output**: `[{\"DriveLetter\":\"C\",\"FileSystemLabel\":\"OS\",\"FileSystem\":\"NTFS\",\
+         \"DriveType\":\"Fixed\",\"SizeGB\":238.4,\"FreeGB\":42.1,\"UsedPct\":82.3,\"HealthStatus\":\"Healthy\"},\
+         {\"DriveLetter\":null,\"FileSystemLabel\":\"\",\"FileSystem\":\"FAT32\",\"DriveType\":\"Fixed\",\
+         \"SizeGB\":0.1,\"FreeGB\":0.08,\"UsedPct\":20.0,\"HealthStatus\":\"Healthy\"}]`\n\
+         \n\
          **Notes**: 跟 list_partitions 互补 —— 看「能不能写文件」用本工具，看「分区表对不对」用 list_partitions。\
          FileSystem 是 `RAW` 时**严重警告**（用户数据可能仍在但文件系统结构损坏，需要 TestDisk 救援）。"
     }
@@ -55,5 +60,16 @@ impl Tool for ListVolumes {
 ConvertTo-Json @(Get-Volume -ErrorAction SilentlyContinue | Select-Object @{N='DriveLetter';E={if ($_.DriveLetter) {$_.DriveLetter.ToString()} else {$null}}}, FileSystemLabel, FileSystem, @{N='DriveType';E={$_.DriveType.ToString()}}, @{N='SizeGB';E={[math]::Round($_.Size/1GB,2)}}, @{N='FreeGB';E={[math]::Round($_.SizeRemaining/1GB,2)}}, @{N='UsedPct';E={if ($_.Size -gt 0) {[math]::Round(100*($_.Size - $_.SizeRemaining)/$_.Size,1)} else {0}}}, @{N='HealthStatus';E={$_.HealthStatus.ToString()}}) -Depth 3 -Compress"#;
 
         run_ps_json_array(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListVolumes);
     }
 }

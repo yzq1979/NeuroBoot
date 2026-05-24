@@ -35,6 +35,10 @@ impl Tool for ReadIpConfig {
          - `DNSServers`: DNS 服务器列表（**关键安全检查项**：常见污染 = 改成 8.8.8.8 之外的可疑 IP）\n\
          - `Status`: Up / Disconnected / Disabled / Unknown\n\
          \n\
+         **Example output**: `[{\"InterfaceAlias\":\"WLAN\",\"InterfaceDescription\":\"Intel Wi-Fi 6E AX211\",\
+         \"IPv4Address\":\"192.168.1.100\",\"IPv4Mask\":\"24\",\"IPv4Gateway\":\"192.168.1.1\",\
+         \"DNSServers\":\"114.114.114.114, 8.8.8.8\",\"Status\":\"Up\"}]`\n\
+         \n\
          **Notes**: 只看 IPv4；要看 IPv6 / Wi-Fi 信号强度等，要扩展工具。\
          空数组 = 所有网卡都没启用（PE 里 wpeinit 失败时可能这样）。"
     }
@@ -66,5 +70,16 @@ ConvertTo-Json @(Get-NetIPConfiguration -ErrorAction SilentlyContinue | ForEach-
 }) -Depth 4 -Compress"#;
 
         run_ps_json_array(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ReadIpConfig);
     }
 }

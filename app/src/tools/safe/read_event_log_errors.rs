@@ -34,6 +34,9 @@ impl Tool for ReadEventLogErrors {
          - `Id`: 事件 ID（如 41 = Kernel-Power 异常重启；7026 = 关键启动驱动加载失败）\n\
          - `Message`: 截前 200 字符（避免 token 浪费；要完整看 Event Viewer）\n\
          \n\
+         **Example output**: `[{\"Time\":\"2026-05-24 14:30:01\",\"Level\":\"Error\",\
+         \"Source\":\"disk\",\"Id\":11,\"Message\":\"驱动器 \\\\Device\\\\Harddisk1\\\\DR1 上有控制器错误...\"}]`\n\
+         \n\
          **Notes**: 只看 System log；应用层错误用未来的 read_event_log_application；\
          返回空数组 `[]` 是好消息（窗口内无严重错误）。"
     }
@@ -113,5 +116,16 @@ ConvertTo-Json @($events) -Depth 3 -Compress"#
             return Ok("[]".to_owned());
         }
         Ok(stdout)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ReadEventLogErrors);
     }
 }

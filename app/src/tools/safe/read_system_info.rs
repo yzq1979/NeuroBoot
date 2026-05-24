@@ -34,6 +34,12 @@ impl Tool for ReadSystemInfo {
          - `CpuName` / `CpuCores` / `CpuLogicalProcessors`\n\
          - `BiosVendor` / `BiosVersion`: BIOS 厂商和版本\n\
          \n\
+         **Example output**: `{\"OsName\":\"Microsoft Windows 11 Pro\",\"OsVersion\":\"10.0.26200\",\
+         \"OsBuild\":\"26200\",\"OsArchitecture\":\"64-bit\",\"OsInstallDate\":\"2026-03-15\",\
+         \"LastBoot\":\"2026-05-24 08:00:01\",\"Manufacturer\":\"LENOVO\",\"Model\":\"ThinkPad X1 Carbon Gen 9\",\
+         \"TotalMemoryGB\":32.0,\"CpuName\":\"Intel(R) Core(TM) Ultra 7 255H\",\"CpuCores\":16,\
+         \"CpuLogicalProcessors\":22,\"BiosVendor\":\"LENOVO\",\"BiosVersion\":\"N40ET12W\"}`\n\
+         \n\
          **Notes**: PE 里 WMI 服务通常可用，跨主系统/PE 一致；查询是毫秒级。\
          返回 `{{}}` 表示 WMI 失败（极少见）。"
     }
@@ -101,5 +107,16 @@ ConvertTo-Json $info -Depth 3 -Compress"#;
             return Ok("{}".to_owned());
         }
         Ok(stdout)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ReadSystemInfo);
     }
 }
