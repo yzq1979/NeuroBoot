@@ -58,6 +58,33 @@ try {
     }
 
     Write-Host ""
+    Write-Host "=== [2.6/5] Copying external tools (v3 Quick Win + Stage 6, optional) ==="
+    # Per docs/BUILD.md "External tools download" section: NeuroBoot ISO default skips 3rd-party
+    # binaries (NTPWEdit / TestDisk / smartctl / 7za / BlueScreenView) for
+    # license/size reasons. User downloads them to C:\NeuroBoot\tools\<name>\,
+    # this step copies the whole dir into PE mount\NeuroBoot\tools\.
+    # If C:\NeuroBoot\tools\ does not exist, skip silently - the corresponding
+    # AI tools will return NotFound at runtime with a doc pointer.
+    $extToolsSrc = 'C:\NeuroBoot\tools'
+    $peTools = "$mount\NeuroBoot\tools"
+    if (Test-Path $extToolsSrc) {
+        New-Item -ItemType Directory -Path $peTools -Force | Out-Null
+        $rcOut = robocopy $extToolsSrc $peTools /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1
+        # robocopy exit code: 0/1/2/3 = success, >=8 = failure
+        $rcExit = $LASTEXITCODE
+        if ($rcExit -lt 8) {
+            $tFiles = Get-ChildItem $peTools -Recurse -File -ErrorAction SilentlyContinue
+            $tBytes = ($tFiles | Measure-Object Length -Sum).Sum
+            "  Copied $($tFiles.Count) external tool files ($([math]::Round($tBytes/1MB,1)) MB) to $peTools"
+            $LASTEXITCODE = 0
+        } else {
+            Write-Warning "robocopy reported failure (exit $rcExit); some external tools may be missing in PE"
+        }
+    } else {
+        "  Skipped - no $extToolsSrc dir (run download-external-tools.ps1 to populate it)"
+    }
+
+    Write-Host ""
     Write-Host "=== [3/5] Copying Qwen3-4B GGUF model (2.4 GB, slow) ==="
     New-Item -ItemType Directory -Path $peModels -Force | Out-Null
     $tStart = Get-Date

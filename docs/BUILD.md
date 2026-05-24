@@ -438,24 +438,86 @@ C:\NeuroBoot\tools-dev\start-llama-vision-server.ps1
 - NeuroBoot 检测到「+ 图片」点击时自动起 vision server，5 分钟空闲自动 kill 省 RAM
 - 当前留作 v2.x todo（见 docs/TODO-v2.md Stage 5.x）
 
-### v2 Stage 6 救援工具下载（可选）
+## 外部工具下载（可选 —— Stage 6 + v3 Quick Win）
 
-3 个旗舰救援工具，默认不在 NeuroBoot ISO 里（避免许可证 / 体积争议）。
-按需自行下载放到 `C:\NeuroBoot\tools\<name>\`，build ISO 时会自动打包到 PE 的 `X:\NeuroBoot\tools\`：
+NeuroBoot 默认 ISO 只含**自家代码** + Qwen GGUF + Mesa + llama.cpp 这几样必需品。
+**外部第三方工具**（密码重置、数据恢复、SMART 详查、解压、BSOD 解析）由于
+**许可证差异 / 二进制体积 / 不同用户取舍**，**默认不打包**。按需自行下载放到 `C:\NeuroBoot\tools\<name>\`。
 
-| 工具 | 用途 | 路径 | 下载 |
-|---|---|---|---|
-| **NTPWEdit** ~500 KB | 重置 Windows 本地账户密码 | `tools\NTPWEdit\NTPWEdit.exe` | https://cdslow.org.ru/files/ntpwedit/ntpwedit_0.7_x64.zip |
-| **TestDisk** ~3 MB | 修复 / 恢复分区表 | `tools\testdisk\testdisk_win.exe` | https://www.cgsecurity.org/wiki/TestDisk_Download |
-| **smartmontools** ~5 MB | 详细 SMART 数据 | `tools\smartmontools\smartctl.exe` | https://builds.smartmontools.org/ |
+### 5 个外部工具一览
 
-下载后跑：
+| 工具 | 用途 | 路径 | 大小 | 许可证 | NeuroBoot AI 工具 |
+|---|---|---|---|---|---|
+| **NTPWEdit** | 重置 Windows 本地账户密码 | `tools\NTPWEdit\NTPWEdit.exe` | ~500 KB | Freeware (自用 OK，公开重分发需复查) | `reset_local_admin_password` |
+| **TestDisk** | 修复 / 恢复分区表 | `tools\testdisk\testdisk_win.exe` | ~3 MB | GPL v2+ | `testdisk_scan_partition` |
+| **smartmontools** | 详细 SMART 数据 | `tools\smartmontools\smartctl.exe` | ~5 MB | GPL | `read_smart` |
+| **7-Zip Extra** | 解压 .7z / .zip / .rar / .iso 等 | `tools\7zip\7za.exe` | ~1.5 MB | LGPL + BSD3 (双协议可商用) | `extract_archive`（v3 Quick Win 2）|
+| **BlueScreenView** | 解析 BSOD minidump 找罪魁驱动 | `tools\BlueScreenView\BlueScreenView.exe` | ~83 KB | Freeware (NirSoft) | `analyze_minidump`（v3 Quick Win 3）|
+
+### 一键下载（推荐）
+
 ```powershell
-# 把 tools/ 拷进 PE payload
-robocopy C:\NeuroBoot\tools C:\NeuroBoot\pe-build\payload\tools /MIR
+# 跑一键下载脚本（国内速度优先，自动降级备链）
+C:\NeuroBoot\tools-dev\download-external-tools.ps1
 ```
-然后重 build ISO，3 个工具会出现在 PE 的 `X:\NeuroBoot\tools\` 下。
-NeuroBoot 检测到 binary 存在时对应 AI 工具就能调用；缺失时返回 NotFound 错误指引重看本节。
+
+脚本会下载全部 5 个工具到 `C:\NeuroBoot\tools\<name>\`，并跑 SHA256 / 文件大小 sanity check。
+如果某个下载失败（网络 / 镜像变动），脚本会提示去对应官方页手工下载并放好路径。
+
+### 手工下载（备用）
+
+| # | 工具 | 官方下载页 |
+|---|---|---|
+| 1 | NTPWEdit | https://cdslow.org.ru/en/ntpwedit/index.html |
+| 2 | TestDisk | https://www.cgsecurity.org/wiki/TestDisk_Download |
+| 3 | smartmontools | https://builds.smartmontools.org/ |
+| 4 | 7-Zip Extra | https://www.7-zip.org/download.html（找 "7-Zip Extra: standalone console version 7za.exe"）|
+| 5 | BlueScreenView | https://www.nirsoft.net/utils/blue_screen_view.html（找页面底部 Download links）|
+
+下载并解压后**按路径表**放到对应位置，例如：
+```
+C:\NeuroBoot\tools\
+├── 7zip\
+│   └── 7za.exe
+├── BlueScreenView\
+│   └── BlueScreenView.exe
+├── NTPWEdit\
+│   └── NTPWEdit.exe
+├── smartmontools\
+│   └── smartctl.exe
+└── testdisk\
+    └── testdisk_win.exe
+```
+
+### 重 build ISO（让外部工具进入 PE）
+
+下载完后**直接跑 ISO 重 build 即可**，`04-add-payload.ps1` [2.6/5] 段会自动把
+`C:\NeuroBoot\tools\` 拷到 PE 的 `X:\NeuroBoot\tools\`：
+
+```powershell
+PowerShell -NoProfile -ExecutionPolicy Bypass `
+  -File C:\NeuroBoot\pe-build\build-scripts\99-build-all.ps1
+```
+
+构建脚本会自动检测 `C:\NeuroBoot\tools\` 是否存在 —— 存在就拷，不存在跳过（不报错）。
+所以**完全不下载也能正常 build ISO**，只是对应的 AI 工具会在调用时返回 `NotFound`
+错误，提示用户「按 docs/BUILD.md 下载放到 X:\NeuroBoot\tools\<name>\ 后再试」。
+
+### 许可证 / 法律边界提醒
+
+- **NTPWEdit** 是 freeware（cdslow.org.ru，俄罗斯作者）—— 个人 / 内部 IT 使用 OK；
+  **公开分发含 NTPWEdit 的 NeuroBoot ISO 需先确认 NTPWEdit 当年的许可条款**
+  （部分版本声明 "free for personal and commercial use"，但旧版细则可能不同）。
+- **BlueScreenView** 是 NirSoft freeware —— [NirSoft 官方声明](https://www.nirsoft.net/about_nirsoft_freeware.html)
+  允许个人 / 公司 / 教育内部使用；**禁止商业重分发**（如做成付费产品里的一部分）。
+  NeuroBoot ISO 个人 / IT 用 OK，做成商业救援盘卖钱**不可**。
+- **TestDisk / PhotoRec** 是 GPL v2+ —— 跟 Apache 2.0 不严格兼容，但 NeuroBoot
+  只是 PE 内**调用**它的 binary（没静态链接源码），属"aggregation"不传染 GPL。
+- **smartmontools** 是 GPL —— 同上 aggregation 边界。
+- **7-Zip 7za.exe** 是 LGPL + BSD3 双协议 —— 对 NeuroBoot 完全无障碍。
+
+→ 个人 / 公司内部 IT / 开源项目分发 没问题；**做付费商业救援盘前**必须复查
+NTPWEdit 和 BlueScreenView 的 license（这两条是潜在风险点）。
 
 ---
 
