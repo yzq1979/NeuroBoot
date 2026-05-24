@@ -188,6 +188,15 @@ echo Type "wpeutil shutdown" to power off, or "wpeutil reboot" to restart.
     Write-Host ""
     Write-Host "[DONE] Stage 6.5 payload integrated. Image still mounted."
     Write-Host "Stage 6.6 will: dism /Unmount-Image /Commit + MakeWinPEMedia /ISO"
+
+    # Force exit code 0 to override $LASTEXITCODE leak from robocopy (Win32
+    # exit 1 = "one or more files copied", which is success for our /MIR).
+    # PS 5.1 propagates the LAST NATIVE EXE's exit code across `& script.ps1`
+    # boundaries regardless of manual `$LASTEXITCODE = 0` assignments inside
+    # the child scope. 99-build-all.ps1's wrapper check would otherwise see
+    # $LASTEXITCODE=1 and throw "Phase 4 failed" despite stage 6.5 succeeding.
+    # exit 0 inside try still runs the finally block (Stop-Transcript).
+    exit 0
 } catch {
     Write-Error "Stage 6.5 failed: $_"
     exit 1
