@@ -14,7 +14,7 @@
 | RAM | ≥ 16 GB（编译 + 跑模型 + PE ramdisk） |
 | 磁盘空间 | ≥ 30 GB 空闲（ADK 5 GB + ISO 6 GB + 模型 2.5 GB + workspace 5 GB + Rust target/ 5 GB + 杂） |
 | CPU | 任意 x64（编译期不重要） |
-| U 盘 | ≥ 16 GB（NeuroBoot.iso 是 2.89 GB；Kingston 32 GB DT 实测） |
+| U 盘 | ≥ 16 GB（NeuroBoot.iso v1.0 = 2.89 GB / v1.0.1 = 2.93 GB / v3.0 = ~3.5-3.9 GB depending on Phase 3 ops; Kingston 32 GB DT 实测） |
 | 网络 | 需要联网下载 ADK、模型、Mesa、Ventoy 等（国内可能要走代理） |
 
 ### 0.2 目标机（启动 PE 用）—— ⚠ 真测后明确硬限制

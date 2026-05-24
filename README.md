@@ -31,9 +31,11 @@ destructive operations explicit and reviewable.
   inference, no GPU required
 - **Agent** — hand-rolled tool-use loop (no third-party SDK), OpenAI function-calling compatible,
   5-round limit, automatic context truncation to fit server ctx
-- **Tools (v1.0)** — 4 registered: 3 safe (`list_disks` / `read_system_info` /
-  `read_event_log_errors`) + 1 dangerous (`delete_path`, with confirmation popup and a hard-coded
-  blocklist that refuses whole-drive deletes)
+- **Tools (v3.0)** — 30 registered: 22 safe + 8 dangerous + 3 meta (`load_skill` for
+  progressive-disclosure skill loading, `propose_plan` for Cline-style approval flow, `memory`
+  for cross-reboot persistent notes). Original v1.0 set was 4 (3 safe + 1 dangerous). Every
+  dangerous tool triggers a confirmation popup; `--readonly` flag strips them all from the
+  registry. See [docs/TODO-v3.0.md](docs/TODO-v3.0.md) for the full module breakdown.
 - **A+C dual-endpoint** (v1.0.1+) — three-tier config (env var > `config.json` on the USB > built-in
   defaults). On startup, probes the remote OpenAI-compatible endpoint via HEAD `/v1/models`; if
   reachable use it, otherwise fall back to local llama-server. One-click switch in the top bar.
@@ -70,7 +72,15 @@ destructive operations explicit and reviewable.
 | **v2 ISO rebuild** | pending | — | All v2 changes ready; one admin PowerShell build pass produces NeuroBoot.iso ~3.3 GB |
 | **v3 Quick Wins 1-4** | done (code) | 2026-05-24 | Prompt caching (`cache_prompt: true` + `--slot-save-path`, ~93% TTFT cut) + 7-Zip extract + BSOD analyzer (BlueScreenView) + SKILL YAML frontmatter |
 | **v3 external tools flow** | done (code) | 2026-05-24 | `tools-dev/download-external-tools.ps1` one-shot installer for 5 third-party tools + `04-add-payload.ps1` [2.6/5] auto-copy step |
-| **v3.0 roadmap** | planned | — | See **[docs/TODO-v3.md](docs/TODO-v3.md)** — Sprint 2/3 covers Wi-Fi GUI, Hook system, persistent Memory, file manager, full backup/restore, data recovery GUI; ~6~8 weeks |
+| **v3.0 W1** | done (code) | 2026-05-25 | 22 tool descriptions rewritten per Anthropic 2026 best practices + `assert_v30_description_convention()` enforced via 1-test-per-tool |
+| **v3.0 W1.5** | done (code) | 2026-05-25 | Skill progressive disclosure (Anthropic 2025-12 standard) — Tier 1 summary on startup + Tier 2 `load_skill(name)` tool for on-demand body fetch |
+| **v3.0 W2-3** | done (code) | 2026-05-25 | 5 new diagnostic skills (recover-bitlocker / fix-boot-failure / reset-password / diagnose-slow / recover-data); 8 skills total |
+| **v3.0 W3-4** | done (code) | 2026-05-25 | Plan Mode (Cline-style) — `propose_plan` tool + UI dual-color modal (blue safe / red dangerous) + agent loop intercept |
+| **v3.0 W6-7** | done (code) | 2026-05-25 | Hooks system (4 trigger points: SessionStart / PreToolUse / PostToolUse / Stop) + persistent Memory (6 commands + path traversal guard) — both per-USB opt-in |
+| **v3.0 W5-6** | done (code) | 2026-05-25 | Error code RAG dictionary — Phase 1 (FTS5 trigram + 49 fixtures) ships in ISO; Phase 2 (sqlite-vec hybrid + Qwen3-Embedding-0.6B + Microsoft Learn crawler ~17k) is an opt-in operational step |
+| **v3.0 W7 tools** | done (code) | 2026-05-25 | 5 new safe tools: list_winre_status / bitlocker_status / find_large_files / read_recent_installs / lookup_error_code |
+| **v3.0 W8** | done (code) | 2026-05-25 | Eval framework (feature-gated) + 30 golden prompts covering 5 categories; `cargo test --features eval` runs offline parser smoke test + live agent regression suite |
+| **v3.0 W8.5** | pending USB test | — | Real USB boot + checklist run + bug collection. See **[docs/W8.5-real-test-checklist.md](docs/W8.5-real-test-checklist.md)**. After this passes, `git tag v3.0` + push to remote. |
 
 See **[docs/TODO-v3.md](docs/TODO-v3.md)** for the **v3 roadmap (30+ tasks across Sprint 1/2/3)** based on
 4 agent reports (PE rescue + AI capability + judicial forensics feasibility + SmolVLM rejection) from
