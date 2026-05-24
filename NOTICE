@@ -1,0 +1,107 @@
+NeuroBoot
+Copyright 2026 yzq1979 and NeuroBoot contributors
+
+This product is licensed under the Apache License, Version 2.0 (the
+"License"). See the LICENSE file or http://www.apache.org/licenses/LICENSE-2.0
+for the full terms.
+
+==============================================================================
+Third-party components and their licenses
+==============================================================================
+
+This product bundles or depends on the following third-party software.
+The list documents what is shipped inside the NeuroBoot source tree,
+inside the generated ISO, or downloaded by users while following the
+build instructions (docs/BUILD.md).
+
+------------------------------------------------------------------------------
+1. Noto Sans SC font
+   - Path in repo: app/assets/fonts/NotoSansSC-Regular.ttf (~2.4 MB)
+   - Bundled in:   neuroboot.exe via include_bytes! macro
+   - License:      SIL Open Font License, Version 1.1
+   - Upstream:     https://fonts.google.com/noto/specimen/Noto+Sans+SC
+
+------------------------------------------------------------------------------
+2. Microsoft Visual C++ Runtime DLLs (CRT redist)
+   - Path in repo: pe-build/payload/crt-redist/ (17 DLLs, ~1.9 MB)
+                   - vcruntime140.dll
+                   - ucrtbase.dll
+                   - api-ms-win-crt-*.dll (15 UCRT umbrella DLLs)
+   - Distributed under Microsoft's "Distributable Code" terms for the
+     Visual Studio Subscription. These DLLs are required for llama-server.exe
+     (a non-static msvc build) to start inside Windows PE, which does
+     not bundle the Visual C++ Runtime by default.
+   - Source: Visual Studio 2026 VC redist (vcruntime140) +
+             Windows 10 SDK 10.0.26100.0 Redist (api-ms-win-crt-*) +
+             C:\Windows\System32 (ucrtbase)
+   - Reproduce with: tools-dev/collect-crt-redist.ps1
+
+------------------------------------------------------------------------------
+3. llama.cpp (runtime binary, NOT bundled in this repo)
+   - Used by:     NeuroBoot to run local GGUF model inference (llama-server.exe)
+   - Distributed: Inside the generated NeuroBoot.iso under \NeuroBoot\llama-cpp\
+                  (downloaded separately per docs/BUILD.md section 1.4)
+   - License:     MIT License
+   - Upstream:    https://github.com/ggml-org/llama.cpp
+
+------------------------------------------------------------------------------
+4. Mesa3D (llvmpipe software OpenGL renderer)
+   - Used by:     NeuroBoot for OpenGL rendering inside Windows PE (no GPU drivers)
+   - Distributed: Inside the generated NeuroBoot.iso as opengl32.dll +
+                  libgallium_wgl.dll next to neuroboot.exe
+                  (downloaded as mesa-dist-win release per docs/BUILD.md)
+   - License:     MIT License (Mesa core); see Mesa's own license terms for
+                  detailed per-component licenses.
+   - Upstream:    https://www.mesa3d.org/  /  https://github.com/pal1000/mesa-dist-win
+
+------------------------------------------------------------------------------
+5. Qwen3-4B-Instruct-2507 (GGUF quantized weights)
+   - Used by:     llama-server.exe for local AI inference (default model)
+   - Distributed: Inside the generated NeuroBoot.iso (~2.33 GB)
+                  (downloaded separately per docs/BUILD.md section 1.5)
+   - License:     Apache License 2.0 (Qwen series license)
+   - Upstream:    https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+
+------------------------------------------------------------------------------
+6. Ventoy (recommended user-side multi-boot USB tool)
+   - Role:        Recommended way to install NeuroBoot.iso to a USB stick.
+                  Not bundled in this repo; user downloads separately per
+                  docs/BUILD.md.
+   - License:     GNU General Public License, Version 3
+   - Upstream:    https://www.ventoy.net/
+
+------------------------------------------------------------------------------
+7. Microsoft Windows ADK / WinPE add-on (build-time dependency)
+   - Role:        Provides copype, DISM, oscdimg, and the WinPE base image
+                  (boot.wim) that NeuroBoot.iso is built on top of.
+   - License:     Microsoft EULA. Build-time only; not redistributed by
+                  this repo. The generated NeuroBoot.iso contains a customized
+                  WinPE image and is subject to the WinPE redistribution terms
+                  documented by Microsoft.
+   - Upstream:    https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install
+
+==============================================================================
+Rust crate dependencies
+==============================================================================
+
+The Rust source tree (app/) depends on a number of open-source crates from
+crates.io. The complete dependency tree with versions is recorded in
+app/Cargo.lock. Run `cargo tree` for a full listing or `cargo license` (after
+installing the cargo-license subcommand) for a license summary. Notable direct
+dependencies and their licenses:
+
+   eframe      (egui application framework)     ........ MIT OR Apache-2.0
+   egui                                          ........ MIT OR Apache-2.0
+   reqwest     (HTTP client, rustls TLS)         ........ MIT OR Apache-2.0
+   serde, serde_json                             ........ MIT OR Apache-2.0
+   rfd         (file dialog, Win32 backend)      ........ MIT
+   base64                                        ........ MIT OR Apache-2.0
+
+==============================================================================
+Trademarks
+==============================================================================
+
+"NeuroBoot" and the Chinese name "神启" are trademarks (or claimed marks) of
+the NeuroBoot project. The Apache License, Section 6, does not grant
+permission to use these trade names. Forks and derivative works should
+adopt their own product naming.

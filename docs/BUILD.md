@@ -372,14 +372,28 @@ C:\NeuroBoot\
 │   │   └── NeuroBoot.iso           ← 最终产物
 │   └── winpe-config/               （未用，给 ADK 替代方案预留）
 ├── models/                         Qwen GGUF（git ignored，2.4 GB）
-└── tools-dev/                      开发期辅助工具（git ignored）
-    ├── adksetup.exe                ADK online installer
-    ├── adkwinpesetup.exe           WinPE add-on online installer
-    ├── install-adk.ps1             ADK 静默安装脚本
-    ├── build-release.ps1           cargo build with crt-static
-    ├── start-llama-server.ps1      本地开发期启动 llama-server
-    ├── llama-cpp/b9294/            llama.cpp CPU build 解压
-    ├── mesa-extract/x64/           Mesa 解压（含 opengl32.dll + libgallium_wgl.dll）
-    ├── ventoy/ventoy-X.X.X/        Ventoy GUI 工具
-    └── mesa3d-26.1.1-release-msvc.7z
+└── tools-dev/                      开发期辅助工具（.ps1 入 git，二进制 git ignored）
+    ├── install-adk.ps1             ADK 静默安装脚本（入 git）
+    ├── build-release.ps1           cargo build with crt-static（入 git）
+    ├── collect-crt-redist.ps1      抓 17 个 CRT redist DLL（v1.0.1+，入 git）
+    ├── start-llama-server.ps1      本地开发期启动 llama-server（入 git）
+    ├── setup-new-usb.ps1           Ventoy 写盘辅助（入 git）
+    ├── adksetup.exe                ADK online installer（不入 git）
+    ├── adkwinpesetup.exe           WinPE add-on online installer（不入 git）
+    ├── llama-cpp/b9294/            llama.cpp CPU build 解压（不入 git）
+    ├── mesa-extract/x64/           Mesa 解压（不入 git）
+    ├── ventoy/ventoy-X.X.X/        Ventoy GUI 工具（不入 git）
+    └── mesa3d-26.1.1-release-msvc.7z（不入 git）
 ```
+
+---
+
+## 许可证 / License
+
+NeuroBoot 使用 **[Apache License 2.0](../LICENSE)** 许可。第三方组件（Noto Sans SC / llama.cpp / Mesa / Qwen 模型 / Ventoy / Microsoft CRT 等）attribution 详见 **[NOTICE](../NOTICE)**。
+
+- 商业使用 / 修改 / 分发 / 私用都允许
+- 必须保留版权声明 + 标注修改 + 不可使用「NeuroBoot」「神启」商标推广 fork
+- 含明确专利授权（含反诉条款）
+
+Build 时使用的 ADK / Windows SDK 是 Microsoft EULA，生成的 NeuroBoot.iso 含 WinPE base image，分发时受 [WinPE 再分发条款](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe-intro) 约束。

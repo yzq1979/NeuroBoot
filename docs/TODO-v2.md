@@ -405,33 +405,47 @@ LLM 看到 kind 能决策（如 PermissionDenied → 告诉用户切 admin；Not
 
 ## Part I：实施优先级 / 路线图
 
+### v1.0.1+ 已完成（2026-05-24 真测后追加，超出原 v2 路线图）
+- [x] **healthcheck-based startup** —— PE startnet.cmd 内嵌 PS 探测 /health（原 P0 #3）
+- [x] **WinPE-FontSupport-ZH-CN.cab** —— cmd / 系统对话框中文显示（原 P0 #7）
+- [x] **端点 A+C UI 配置面板** —— ⚙ 设置面板 + config.json 持久化（原 P1）
+- [x] CRT redist 同目录拷贝修复 llama-server PE 闪退（原非路线图，真测发现）
+- [x] 中文输入兜底：6 快捷按钮 + U 盘 prompts.txt 下拉（原非路线图）
+- [x] **vision 多模态**：「+ 图片」按钮 + OpenAI vision schema + VL 模型检测（原非路线图）
+- [x] **状态栏**：时钟 / 内存 / 本地 IP（原非路线图）
+- [x] **系统启动器**：cmd / 文件管理器按钮（原非路线图）
+- [x] **电源控制**：重启 / 关机 / 退出按钮 + 确认弹窗（原非路线图）
+
 ### v2.0 必做（P0，预计 1~2 个月）
-1. **流式输出** （Part B.1）—— 最影响体验的一项
-2. **Markdown 渲染** （Part D.2）—— UI 质感跃升
-3. **healthcheck-based startup** （Part G.2）—— 砍 30+ 秒启动等待
-4. **核心 safe 工具扩充**：A.2.2/3/4/6 至少各加 2~3 个（磁盘/网络/进程/dump）
-5. **核心 dangerous 工具**：A.3.2 (chkdsk/sfc/dism) + A.3.3 (启动修复) + A.3.4 (Defender)
-6. **smartmontools 打包到 PE**（A.4）
-7. **WinPE-FontSupport-ZH-CN.cab**（E.1）
-8. **「只读模式」启动选项**（C.4）
-9. **System prompt 强化** + 高危关键词拦截（F.1）
+1. [ ] **流式输出** （Part B.1）—— 最影响体验的一项；当前 `stream: false` 一次性返回
+2. [ ] **Markdown 渲染** （Part D.2）—— UI 质感跃升；当前 ui.label plain text
+3. [x] **~~healthcheck-based startup~~** —— v1.0.1+ 已完成
+4. [ ] **核心 safe 工具扩充**：A.2.2/3/4/6 至少各加 2~3 个（磁盘/网络/进程/dump）—— v1.0.1+ 未动，仍 4 个工具
+5. [ ] **核心 dangerous 工具**：A.3.2 (chkdsk/sfc/dism) + A.3.3 (启动修复) + A.3.4 (Defender)
+6. [ ] **smartmontools 打包到 PE**（A.4）
+7. [x] **~~WinPE-FontSupport-ZH-CN.cab~~** —— v1.0.1+ 已完成
+8. [ ] **「只读模式」启动选项**（C.4）—— `neuroboot.exe --readonly` 禁所有 dangerous 工具
+9. [ ] **System prompt 强化** + 高危关键词拦截（F.1）
 
 ### v2.1 重要（P1，预计再 1 个月）
-- Sysinternals / BlueScreenView 打包
-- Tool trait 扩展（requires_admin / category / version）
-- ToolError 分类
-- 工具执行日志
-- 历史对话保存
-- 端点 A+C UI 配置面板
-- 多硬件驱动适配
-- 单测覆盖率提升
+- [ ] Sysinternals / BlueScreenView 打包
+- [ ] Tool trait 扩展（requires_admin / category / version）
+- [ ] ToolError 分类
+- [ ] 工具执行日志
+- [ ] 历史对话保存
+- [x] **~~端点 A+C UI 配置面板~~** —— v1.0.1+ 已完成（升级到 P0 的紧迫性）
+- [ ] 多硬件驱动适配
+- [ ] 单测覆盖率提升（当前 31 测试，覆盖 7 个模块；目标 50%+ 代码覆盖率）
 
 ### v2.2 后续（P2）
-- ARM64 build
-- 代码签名
-- 隐私模式
-- CI/CD 自动化
-- 用户手册 / 工具参考手册
+- [ ] ARM64 build
+- [ ] 代码签名
+- [ ] 隐私模式（敏感字段 redact 后发 LLM）
+- [ ] CI/CD 自动化（GitHub Actions 周期 build ISO + 跑 cargo test）
+- [ ] 用户手册 / 工具参考手册
+- [ ] **语音输入**（远程录音上传 → 云端 STT；PE 本地录音受 ADK 无 audio stack 限制）
+- [ ] **应用层拼音 IME**（rime-luna-pinyin 词典 ~2.4 MB，~600 行 Rust）
+- [ ] LICENSE / NOTICE 已有（v1.0.1+ 已加 Apache-2.0），仅需后续维护 attribution
 
 ---
 
@@ -469,6 +483,6 @@ WebSearch 14 路调研覆盖的关键信息源：
 
 本文档随实施进度更新：每个工具 / 改进项完成后在 checkbox 打勾 + 在 git commit message 引用对应章节号。
 
-**Last updated**: 2026-05-23（v2.0 路线图初版，14 路 WebSearch 调研 + v1.0 反馈整理）
+**Last updated**: 2026-05-24（v1.0.1+ 完成后状态同步：3 项原 P0/P1 已完成 + 6 项原非路线图功能已实施）
 
-**Next review**: v2.0 P0 项完成 50% 时回顾优先级调整
+**Next review**: v2.0 剩余 P0（流式输出 / Markdown / 扩工具 / smartmontools / 只读模式 / system prompt 强化）完成 50% 时回顾优先级调整
