@@ -56,18 +56,35 @@ cargo build --release ...
 
 ## 4. PowerShell 5.1 + 中文 Windows 编码问题
 
-### 4a. `.ps1` 文件含中文 → 解析报错
+### 4a. `.ps1` 文件含中文 → 解析报错（**v3.0 W8.5 第三次踩**）
 
-**症状**：跑 `install-adk.ps1` 报 `表达式或语句中包含意外的标记 "}"`、`字符串缺少终止符: "`、`语句块或类型定义中缺少右"}"`。
+**症状（parser 形态）**：跑 `install-adk.ps1` 报 `表达式或语句中包含意外的标记 "}"`、`字符串缺少终止符: "`、`语句块或类型定义中缺少右"}"`。
 
-**根因**：Write 工具（包括很多 .NET API）默认用 **UTF-8 无 BOM** 写 .ps1。PowerShell 5.1 在中文 Windows（codepage 936 GBK）默认按 ANSI/GBK 解码 .ps1。中文 UTF-8 是 3 字节序列，被 GBK 解码字节边界错位 → 字符串和注释终止符乱掉 → parser error。
+**症状（runtime 形态，更隐蔽）**：v1.0.1 / v3.0 W8.5 两次踩坑都是这种 —— 脚本能 parse、能跑前半段，但某个变量赋值行被 GBK mojibake 吞掉，下游 cmdlet 收到 `$null` 报「无法将参数绑定到参数 X，因为该参数是空值」。看起来完全不像编码问题，bug 指向最终失败的行（如 `Test-Path $skillsSrc`）而不是上方含中文的注释。
+
+**根因**：Write 工具（包括很多 .NET API）默认用 **UTF-8 无 BOM** 写 .ps1。PowerShell 5.1 在中文 Windows（codepage 936 GBK）默认按 ANSI/GBK 解码 .ps1。中文 UTF-8 是 3 字节序列，被 GBK 解码字节边界错位 → 字符串 / 注释 / 紧接的赋值行被吞 → parser error 或后续变量 null。
+
+**累积式触发**（v3.0 W8.5 教训）：单个 commit 加 1 行中文注释看不出问题（PS parser 居然能 recover），但跨多个 commits 累加非 ASCII 字节后跨过某个 token 边界突然挂掉。所以**每个改 .ps1 的 commit 都必须 audit**。
 
 **解决**（择一）：
 - **纯英文 .ps1**（最简最可靠）—— 注释、Write-Host 都用英文
-- **UTF-8 with BOM .ps1** —— PS 5.1 看到 `EF BB BF` 会切到 UTF-8。Write tool 不直接支持 BOM；要用 PS tool `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($true))`
+- **UTF-8 with BOM .ps1** —— PS 5.1 看到 `EF BB BF` 会切到 UTF-8。Write tool 不直接支持 BOM；要用 PS tool `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($true))` 写，或事后批量补：`$b = [IO.File]::ReadAllBytes($p); [IO.File]::WriteAllBytes($p, ([byte[]](0xEF,0xBB,0xBF) + $b))`
 - **改用 PowerShell 7+** —— 默认 UTF-8（含 BOM-less）
 
-项目里所有 `pe-build/build-scripts/*.ps1` 都是**纯英文**避开这个坑。
+**审计 one-liner**（每次 commit .ps1 前跑）：
+
+```powershell
+Get-ChildItem pe-build\build-scripts -Filter *.ps1 | ForEach-Object {
+    $b = [IO.File]::ReadAllBytes($_.FullName)
+    $hasBom = $b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF
+    $nonAscii = ($b | Where-Object { $_ -gt 0x7F }).Count
+    if ($nonAscii -gt 0 -and -not $hasBom) {
+        Write-Warning "$($_.Name) has $nonAscii non-ASCII bytes but no BOM"
+    }
+}
+```
+
+历史三次：① 阶段 6.1 `install-adk.ps1` parser error；② v1.0.1 `99-build-all.ps1` Start-Transcript 拿空 path；③ v3.0 W8.5 `04-add-payload.ps1` Phase 4 [2.7/5] Test-Path 拿空（commit `5a535e7` 加 BOM 修复）。
 
 ### 4b. PowerShell 5.1 native exe 用 `2>&1` 假阳报错
 
