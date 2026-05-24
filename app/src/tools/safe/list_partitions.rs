@@ -16,9 +16,25 @@ impl Tool for ListPartitions {
     }
 
     fn description(&self) -> &str {
-        "列出本机所有硬盘的分区详情。可选参数 disk_number 仅查指定磁盘。\
-         返回 JSON 数组，每条含 DiskNumber/PartitionNumber/DriveLetter/SizeGB/Type/\
-         IsBoot/IsSystem/IsActive 字段。"
+        "列出硬盘的分区表（GPT/MBR）—— 比 list_volumes 更底层。\n\
+         \n\
+         **When to use**: 用户问「分区怎么排的」「EFI 分区在哪」「为什么我看不到 D 盘了」时；\
+         诊断启动问题（System / Boot 标记是否正确）；\
+         判断该机是 GPT 还是 MBR（Type 字段）；\
+         分区表损坏 / 误删分区 排查的第一手数据。\n\
+         \n\
+         **Parameters**:\n\
+         - `disk_number` (integer, 可选): 只查这块物理硬盘的分区。盘号从 list_disks 取。不传 = 查所有盘\n\
+         \n\
+         **Returns**: JSON 数组，每条分区含：\n\
+         - `DiskNumber` / `PartitionNumber`\n\
+         - `DriveLetter`: 盘符（可能 null —— EFI / RECOVERY 等隐藏分区无盘符）\n\
+         - `SizeGB`: 容量\n\
+         - `Type`: Basic / GPT / MBR / IFS / Unknown 等\n\
+         - `IsBoot` / `IsSystem` / `IsActive`: 启动标志位（System 分区是含 BCD 的；Boot 是含 Windows 文件夹的；这俩可能不在一个分区）\n\
+         \n\
+         **Notes**: 跟 list_volumes 互补 —— 本工具看分区表层（GPT entries），list_volumes 看文件系统层（卷使用率）；\
+         数据恢复 / 启动修复要先看本工具确定分区表是否完整。"
     }
 
     fn safety(&self) -> SafetyClass {

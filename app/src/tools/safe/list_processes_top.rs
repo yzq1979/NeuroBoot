@@ -17,10 +17,26 @@ impl Tool for ListProcessesTop {
     }
 
     fn description(&self) -> &str {
-        "按 CPU 累计秒数（默认）或内存（WorkingSet）排序，返回前 N 个进程。\
-         参数：sort_by ('cpu' 或 'memory'，默认 'cpu')；top_n (1~50，默认 20)。\
-         返回 JSON 数组，每条含 PID/Name/CPU/MemoryMB/StartTime/Path 字段。\
-         CPU 是启动以来累计的 CPU 秒数（不是瞬时 CPU%）；MemoryMB 是 WorkingSet 物理内存占用。"
+        "按 CPU 累计秒数或内存排序，返回 top N 进程 —— 找性能元凶。\n\
+         \n\
+         **When to use**: 用户说「电脑卡」「CPU 100%」「内存爆了」「风扇一直转（可能挖矿病毒）」时；\
+         排查异常进程（按 sort_by='memory' 看谁吃内存，sort_by='cpu' 看谁吃 CPU）；\
+         判断是真的负载高还是某个失控进程。\n\
+         \n\
+         **Parameters**:\n\
+         - `sort_by` (string, 'cpu' 或 'memory', 默认 'cpu'): 按累计 CPU 秒数还是 WorkingSet 物理内存排序\n\
+         - `top_n` (integer, 1~50, 默认 20): 返回前 N 个\n\
+         \n\
+         **Returns**: JSON 数组（按指定字段降序），每进程含：\n\
+         - `PID`: 进程 ID\n\
+         - `Name`: 进程名（不含 .exe）\n\
+         - `CPU`: 启动以来累计 CPU 秒数（**注意**：不是瞬时 CPU%；瞬时 % 要用 Get-Counter）\n\
+         - `MemoryMB`: WorkingSet 物理内存占用（这是真的 RAM 占用）\n\
+         - `StartTime`: HH:mm:ss 或 '?'（系统进程读不到）\n\
+         - `Path`: exe 完整路径（'?'  = 权限不够；**关键安全信号**：路径在 %TEMP% / %APPDATA% / 用户目录的奇怪进程可能是恶意软件）\n\
+         \n\
+         **Notes**: CPU 字段是累计值不是瞬时 —— 长时间运行的进程（如 svchost）天生 CPU 累计大，**不一定有问题**。\
+         真要看瞬时 CPU% 等未来加专门工具。"
     }
 
     fn safety(&self) -> SafetyClass {

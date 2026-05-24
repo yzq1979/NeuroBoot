@@ -18,10 +18,24 @@ impl Tool for ReadEventLogErrors {
     }
 
     fn description(&self) -> &str {
-        "查询 Windows 系统日志（System log）中最近的严重（Critical）和错误（Error）事件。\
-         参数：hours（最近多少小时，默认 24，范围 1~720）；max_events（最多返回几条，\
-         默认 20，范围 1~100）。返回 JSON 数组，每条事件含 Time / Level / Source / Id / \
-         Message（消息截前 200 字符）。"
+        "查 Windows 系统日志（System log）最近的 Critical 和 Error 事件。\n\
+         \n\
+         **When to use**: 用户说「电脑出问题了」「最近不稳定」「时不时蓝屏 / 自动重启」「装了某软件后开始报错」时 —— \
+         系统日志是 Windows 故障诊断的**第一信息源**；几乎所有诊断流程都应该先调这个。\n\
+         \n\
+         **Parameters**:\n\
+         - `hours` (integer, 1~720, 默认 24): 查最近多少小时。一般用 24（一天）；用户说「最近一周」用 168；首次问诊用 48 收集更全证据\n\
+         - `max_events` (integer, 1~100, 默认 20): 返回上限。事件多时用 20 看最新；调高到 50 看完整\n\
+         \n\
+         **Returns**: JSON 数组（按时间从新到旧），每条含：\n\
+         - `Time`: yyyy-MM-dd HH:mm:ss\n\
+         - `Level`: Critical / Error / Lvl<N>\n\
+         - `Source`: 事件来源（如 disk / Application Error / Kernel-Power）—— **关键诊断信息**\n\
+         - `Id`: 事件 ID（如 41 = Kernel-Power 异常重启；7026 = 关键启动驱动加载失败）\n\
+         - `Message`: 截前 200 字符（避免 token 浪费；要完整看 Event Viewer）\n\
+         \n\
+         **Notes**: 只看 System log；应用层错误用未来的 read_event_log_application；\
+         返回空数组 `[]` 是好消息（窗口内无严重错误）。"
     }
 
     fn safety(&self) -> SafetyClass {

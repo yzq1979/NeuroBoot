@@ -24,9 +24,24 @@ impl Tool for ListDisks {
     }
 
     fn description(&self) -> &str {
-        "列出本机所有物理硬盘的基本信息（盘号、型号、容量 GB、健康状态、运行状态、总线类型）。\
-         无参数。返回 JSON 数组，每个元素含 Number/FriendlyName/SizeGB/HealthStatus/\
-         OperationalStatus/BusType 字段。"
+        "列出本机所有物理硬盘的基本信息。\n\
+         \n\
+         **When to use**: 用户问「我有几块硬盘」「硬盘列表」「硬盘型号是什么」时；\
+         诊断硬盘相关问题（坏盘、容量不足、找不到分区）的第一步收集物理硬盘清单；\
+         需要后续用 list_partitions / list_volumes 时先拿盘号。\n\
+         \n\
+         **Parameters**: 无。\n\
+         \n\
+         **Returns**: JSON 数组，每元素含：\n\
+         - `Number`: 盘号 (0/1/2/...) —— 用于 list_partitions 的 disk_number 参数\n\
+         - `FriendlyName`: 硬盘型号字符串（如 Samsung SSD 870 EVO 1TB）\n\
+         - `SizeGB`: 容量 GB，1 位小数\n\
+         - `HealthStatus`: Healthy / Warning / Unhealthy / Unknown\n\
+         - `OperationalStatus`: Online / Offline 等\n\
+         - `BusType`: SATA / NVMe / USB / SAS 等\n\
+         \n\
+         **Notes**: 只看物理硬盘层，**不**显示分区或卷信息；那些要用 list_partitions / list_volumes。\
+         返回空数组 `[]` 表示读不到任何盘（极少见，可能 WMI 服务挂了）。"
     }
 
     fn safety(&self) -> SafetyClass {

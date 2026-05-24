@@ -18,10 +18,24 @@ impl Tool for ReadSystemInfo {
     }
 
     fn description(&self) -> &str {
-        "读取本机的系统与硬件摘要信息（OS 版本、CPU、RAM、主板、BIOS、最后启动时间等）。\
-         无参数。返回 JSON object，含 OsName / OsVersion / OsBuild / OsArchitecture / \
-         OsInstallDate / LastBoot / Manufacturer / Model / TotalMemoryGB / CpuName / \
-         CpuCores / CpuLogicalProcessors / BiosVendor / BiosVersion 字段。"
+        "读取本机系统与硬件摘要：OS 版本 / CPU / RAM / 主板 / BIOS / 最后启动时间。\n\
+         \n\
+         **When to use**: 用户问「我的电脑是什么配置」「Windows 是什么版本」「最后什么时候开机的」时；\
+         诊断兼容性问题（驱动 / 软件 / Windows 功能）要先知道 OS 版本和架构；\
+         判断硬件老旧程度（看 BIOS 年份 + CPU 型号）。\n\
+         \n\
+         **Parameters**: 无。\n\
+         \n\
+         **Returns**: JSON object，字段顺序稳定：\n\
+         - `OsName` / `OsVersion` / `OsBuild` / `OsArchitecture` / `OsInstallDate`: Windows 元数据\n\
+         - `LastBoot`: 最后启动时间（异常关机后这个时间会跳变，可对比 list_recent_shutdowns）\n\
+         - `Manufacturer` / `Model`: 整机品牌 + 型号（如 LENOVO / ThinkPad X1 Carbon Gen 9）\n\
+         - `TotalMemoryGB`: 物理内存总量\n\
+         - `CpuName` / `CpuCores` / `CpuLogicalProcessors`\n\
+         - `BiosVendor` / `BiosVersion`: BIOS 厂商和版本\n\
+         \n\
+         **Notes**: PE 里 WMI 服务通常可用，跨主系统/PE 一致；查询是毫秒级。\
+         返回 `{{}}` 表示 WMI 失败（极少见）。"
     }
 
     fn safety(&self) -> SafetyClass {

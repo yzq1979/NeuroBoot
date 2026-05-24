@@ -65,6 +65,17 @@ try {
     Write-Host ""
     Write-Host "=== [4/5] Writing X:\NeuroBoot\start-llama-server.cmd ==="
     $startLlama = "$peNeuroBoot\start-llama-server.cmd"
+    # v2 Stage 1.5 optimizations:
+    # --no-mmap : U-disk FAT32/exFAT may not support reliable mmap;
+    #             force read-mode to avoid IO stalls on slow USB sticks.
+    # -t : physical core count. We use 4 as a sensible default. Reason:
+    #      most PE target machines have 4-8 physical cores; setting -t to
+    #      logical cores (hyperthreaded) is anti-optimal for matmul-heavy
+    #      LLM inference (per llama.cpp official benchmark guidance).
+    #      User can edit this file on USB before boot to tune per-machine.
+    # NB: -m points to Q4_K_M for now; Stage 1.3 upgrade to Q5_K_M will
+    #     update this filename. Search "Qwen3-4B-Instruct-2507-Q*_K_M.gguf"
+    #     to bump quant level later without touching the rest of the cmd.
     $llamaCmd = @'
 @echo off
 REM Launches llama-server with the bundled Qwen3-4B GGUF on PE.
@@ -77,7 +88,8 @@ llama-server.exe ^
   --port 8080 ^
   -c 16384 ^
   -ngl 0 ^
-  -t -1
+  -t 4 ^
+  --no-mmap
 '@
     [System.IO.File]::WriteAllText($startLlama, $llamaCmd, [System.Text.ASCIIEncoding]::new())
     "  Written: $startLlama"

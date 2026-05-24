@@ -43,9 +43,28 @@ impl Tool for DeletePath {
     }
 
     fn description(&self) -> &str {
-        "删除指定路径的文件或目录。如果是目录，递归删除其中所有内容。\
-         参数 path 必须是绝对路径。**此操作不可撤销，调用前会向用户请求人工确认**。\
-         关键系统路径（C:\\、C:\\Windows、C:\\Program Files、C:\\Users 等）会被工具直接拒绝。"
+        "**[DANGEROUS] 不可撤销** —— 删除指定路径的文件或目录（递归）。\n\
+         \n\
+         **When to use**: 仅当用户**明确请求删除某个文件/目录**时才调用。\
+         例如「帮我删除桌面上的 test.txt」「清空 D:\\old-backups\\ 目录」。\n\
+         \n\
+         **When NOT to use**（重要！）:\n\
+         - 用户说「电脑慢」「想清理空间」时**不要**调用 —— 这是诊断请求不是删除请求\n\
+         - 用户说「重置」「恢复出厂」「修复 Windows」时**不要**用本工具，那些有专门修复工具\n\
+         - 系统路径（C:\\Windows、C:\\Windows\\System32、C:\\Program Files、C:\\Program Files (x86)、\
+         C:\\ProgramData、C:\\Users 根本身）**绝对不要**调 —— 模型层就该拒，会触发黑名单\n\
+         - 用户没明确说删除时**不要**自作主张删除「看起来没用」的文件\n\
+         \n\
+         **Parameters**:\n\
+         - `path` (string, required): 绝对路径，文件或目录。Windows 路径分隔符 `\\\\` 或 `/` 都可\n\
+         \n\
+         **Returns**: 成功返回 `(已删除) <path>`；路径不存在返回 `(不存在) ...`；命中黑名单返回 error。\n\
+         \n\
+         **执行流程**: UI 必弹确认弹窗 → 用户必须人工点「确认执行」 → 才真删除。\
+         用户点取消 → 工具返回 `(用户拒绝)` → **不要重试相同操作**，问用户是否换个方式。\n\
+         \n\
+         **未来**: v2 Stage 4 会改成 move-to-trash 模式（move to X:\\trash\\<timestamp>\\），\
+         给用户翻车后的恢复机会；当前直接 Remove-Item。"
     }
 
     fn safety(&self) -> SafetyClass {

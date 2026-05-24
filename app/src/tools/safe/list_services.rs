@@ -16,9 +16,24 @@ impl Tool for ListServices {
     }
 
     fn description(&self) -> &str {
-        "列 Windows 服务。参数 status：'Running'（默认）/ 'Stopped' / 'all'。\
-         返回 JSON 数组，每条含 Name/DisplayName/Status/StartType 字段。\
-         适合诊断「某服务该跑的没跑」「禁用了导致功能不可用」类。"
+        "列 Windows 服务（按状态过滤）—— 看哪些服务在跑、哪些挂了。\n\
+         \n\
+         **When to use**: 用户说「某功能不能用」（如打印、声音、网络共享、Defender）—— \
+         多数 Windows 功能依赖对应服务（Print Spooler / Audio / Server / WinDefend），\
+         先查服务是否在跑；\
+         判断是被恶意软件 / 优化软件禁用了某个服务（StartType=Disabled）。\n\
+         \n\
+         **Parameters**:\n\
+         - `status` (string, 'Running' 默认 / 'Stopped' / 'all'): 按状态过滤\n\
+         \n\
+         **Returns**: JSON 数组，每服务含：\n\
+         - `Name`: 服务系统名（如 Spooler / wuauserv）—— 跟用户讲时换 DisplayName 更易懂\n\
+         - `DisplayName`: 用户友好名（如「Print Spooler」「Windows Update」）\n\
+         - `Status`: Running / Stopped / StartPending / StopPending / Paused\n\
+         - `StartType`: Automatic / Manual / Disabled / Boot / System（**Disabled = 被人故意禁的，可疑**）\n\
+         \n\
+         **Notes**: 默认只列 Running 节省 token；查「为啥某功能没用」用 status='Stopped' 看挂的；\
+         全面审计用 status='all'。**重要**：PE 里大量主系统服务不会启动，**不要拿 PE 的服务状态推断主系统状态**。"
     }
 
     fn safety(&self) -> SafetyClass {

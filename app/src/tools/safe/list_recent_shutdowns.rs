@@ -22,11 +22,27 @@ impl Tool for ListRecentShutdowns {
     }
 
     fn description(&self) -> &str {
-        "列最近的关机 / 重启 / 异常断电事件（Event IDs 6005 / 6006 / 6008 / 41 / 1074）。\
-         参数 max_events: 默认 20，最大 100。\
-         返回 JSON 数组，每条含 Time / Id / Source / Description / Message 字段。\
-         Id 含义：6005=系统启动，6006=干净关机，6008=异常关机（断电/长按电源/蓝屏自动重启），\
-         41=Kernel-Power 异常重启，1074=用户/进程触发的关机。"
+        "列最近的关机 / 重启 / 异常断电事件 —— 区分正常关机 vs 蓝屏 vs 断电。\n\
+         \n\
+         **When to use**: 用户说「电脑昨晚自己重启了」「不知道什么时候关的机」「怀疑系统在自动重启」时；\
+         配合 list_minidumps + read_event_log_errors 三件套确诊 BSOD；\
+         判断电源稳定性（异常断电频繁 = 电源 / 电池 / 插座问题）。\n\
+         \n\
+         **Parameters**:\n\
+         - `max_events` (integer, 1~100, 默认 20): 返回上限。看「最近几次」用 10，看「最近一周关机模式」用 50\n\
+         \n\
+         **Returns**: JSON 数组（按时间从新到旧），每条含：\n\
+         - `Time` / `Id` / `Source` / `Description` / `Message`\n\
+         \n\
+         **Event ID 含义速查**（Description 字段已翻译，但 Id 也给出便于交叉引用）：\n\
+         - `6005`: Event Log 服务启动 = **系统启动**\n\
+         - `6006`: Event Log 服务停止 = **干净关机 / 重启**（用户菜单关的 / `shutdown /r`）\n\
+         - `6008`: 上次关机异常 = **断电 / 长按电源键 / 蓝屏自动重启**（**警告级**）\n\
+         - `41`:   Kernel-Power = **异常重启 / 突然断电**（**最严重**，可能硬件问题）\n\
+         - `1074`: USER32 关机原因 = **某用户或进程触发的关机**（含 Windows Update 重启）\n\
+         \n\
+         **Notes**: 关机时序通常是 `6006 → 6005`（干净）或直接 `6008 → 6005`（异常）。\
+         **6008 + 41 在同一时间点出现 = 几乎肯定是蓝屏自动重启**，下一步去 list_minidumps 找 dump。"
     }
 
     fn safety(&self) -> SafetyClass {

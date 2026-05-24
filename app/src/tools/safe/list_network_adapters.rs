@@ -16,10 +16,25 @@ impl Tool for ListNetworkAdapters {
     }
 
     fn description(&self) -> &str {
-        "列出本机所有网络适配器（物理网卡 + 虚拟网卡 + 蓝牙/Wi-Fi/有线/无线），\
-         含已禁用的。返回 JSON 数组，每条含 Name/Status (Up/Disconnected/Disabled)/\
-         MacAddress/LinkSpeed/InterfaceDescription/MediaType/DriverVersion 字段。\
-         适合诊断「网卡不见了」「Wi-Fi 灰显」「驱动有问题」类。"
+        "列所有网络适配器（物理 + 虚拟 + 隐藏 + 禁用）—— 看网卡硬件层。\n\
+         \n\
+         **When to use**: 用户说「网卡不见了」「Wi-Fi 图标灰显」「装了 VPN 后多了奇怪网卡」「网速很慢」时；\
+         判断是网卡硬件 / 驱动问题（Status=Disabled / DriverVersion 异常）还是 IP 配置问题（用 read_ip_config）；\
+         检查是否被恶意软件添加了虚拟网卡（用 InterfaceDescription 筛 'TAP'、'VPN' 等关键词）。\n\
+         \n\
+         **Parameters**: 无。\n\
+         \n\
+         **Returns**: JSON 数组，每适配器含：\n\
+         - `Name`: 显示名（中文 Windows 是「以太网」「WLAN」等）\n\
+         - `Status`: Up / Disconnected / Disabled / NotPresent\n\
+         - `MacAddress`: 物理地址（识别厂商 / 重复 MAC 故障用）\n\
+         - `LinkSpeed`: 协商速率（如 1 Gbps，**比 hub/线缆理论值低**的话有问题）\n\
+         - `InterfaceDescription`: 驱动名（识别 OEM / 虚拟网卡）\n\
+         - `MediaType`: 802.3 / Native802.11 / Wireless80211 / 等\n\
+         - `DriverVersion`: 驱动版本号（驱动新旧对比用）\n\
+         \n\
+         **Notes**: 含 `-IncludeHidden`，会看到 VPN / WSL2 / Hyper-V 虚拟网卡。\
+         跟 read_ip_config 互补：本工具看「硬件状态」，read_ip_config 看「TCP/IP 配置」。"
     }
 
     fn safety(&self) -> SafetyClass {

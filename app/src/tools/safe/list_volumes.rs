@@ -16,9 +16,26 @@ impl Tool for ListVolumes {
     }
 
     fn description(&self) -> &str {
-        "列出本机所有卷（含 EFI / RECOVERY 等未分配盘符的）。返回 JSON 数组，每条含 \
-         DriveLetter/FileSystemLabel/FileSystem/DriveType (Fixed/Removable/Network)/\
-         SizeGB/FreeGB/UsedPct/HealthStatus 字段。"
+        "列所有卷（文件系统层）—— 看容量使用率和文件系统类型。\n\
+         \n\
+         **When to use**: 用户问「C 盘还有多少空间」「D 盘满了」「电脑变慢是不是 SSD 满了」时；\
+         判断哪个分区可以扩容 / 哪个该清理；\
+         检查文件系统类型（NTFS / FAT32 / exFAT / RAW —— RAW 意味着文件系统损坏）；\
+         判断盘是固定盘还是 USB（DriveType）。\n\
+         \n\
+         **Parameters**: 无。\n\
+         \n\
+         **Returns**: JSON 数组，每卷含：\n\
+         - `DriveLetter`: 盘符（隐藏卷会是 null —— EFI / RECOVERY）\n\
+         - `FileSystemLabel`: 卷标（用户自定义）\n\
+         - `FileSystem`: NTFS / FAT32 / exFAT / RAW / null\n\
+         - `DriveType`: Fixed（固定盘）/ Removable（U 盘）/ Network / CD-ROM / Unknown\n\
+         - `SizeGB` / `FreeGB`: 总量和剩余\n\
+         - `UsedPct`: 已用 %（**> 90% 时该提示用户清理**）\n\
+         - `HealthStatus`: Healthy / Warning / Unhealthy / Unknown\n\
+         \n\
+         **Notes**: 跟 list_partitions 互补 —— 看「能不能写文件」用本工具，看「分区表对不对」用 list_partitions。\
+         FileSystem 是 `RAW` 时**严重警告**（用户数据可能仍在但文件系统结构损坏，需要 TestDisk 救援）。"
     }
 
     fn safety(&self) -> SafetyClass {

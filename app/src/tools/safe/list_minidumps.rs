@@ -19,10 +19,22 @@ impl Tool for ListMinidumps {
     }
 
     fn description(&self) -> &str {
-        "列出系统蓝屏 dump 文件：C:\\Windows\\Minidump\\*.dmp 与 C:\\Windows\\MEMORY.DMP。\
-         返回 JSON 数组，每条含 Path/SizeMB/LastWriteTime 字段，按时间从新到旧排序。\
-         空数组 = 系统没有崩溃 dump（要么没崩过，要么 dump 被清了 / 没启用自动写入）。\
-         适合诊断「最近频繁蓝屏」—— 先看 dump 数量 + 时间分布，再决定下一步要不要分析具体某个 dump。"
+        "列系统蓝屏 dump 文件清单 —— 看有几个崩溃记录、什么时候崩的。\n\
+         \n\
+         **When to use**: 用户说「电脑蓝屏」「最近频繁蓝屏」「想知道是不是真的蓝屏过」时；\
+         诊断 BSOD 的第一步 —— 先看有没有 dump、什么时候崩的、密集程度（10 分钟连崩 = 严重硬件 / 驱动问题）；\
+         结合 read_event_log_errors 一起看（dump 文件 + Event ID 1001 \"BugCheck\" 对应）。\n\
+         \n\
+         **Parameters**: 无。\n\
+         \n\
+         **Returns**: JSON 数组（按时间从新到旧），每文件含：\n\
+         - `Path`: 完整路径（`C:\\Windows\\Minidump\\<datetime>.dmp` 或 `C:\\Windows\\MEMORY.DMP`）\n\
+         - `SizeMB`: 文件大小（minidump 通常 0.1~1 MB；MEMORY.DMP 是全量内存 dump 通常几个 GB）\n\
+         - `LastWriteTime`: 崩溃时间 yyyy-MM-dd HH:mm:ss\n\
+         \n\
+         **Notes**: 空数组的可能原因：① 没崩过 ② 已被清理（CCleaner 之类）③ 系统设了不写 minidump（控制面板「启动和故障恢复」）。\
+         本工具只**列出 dump 文件**，**不分析内容**；要解码某个 dump 的 driver / bug check code 需 BlueScreenView（v2 Stage 6+ 打包）。\n\
+         **重要**：dump 文件是关键诊断证据，**绝不要建议用户删除**，除非确认不再需要排查。"
     }
 
     fn safety(&self) -> SafetyClass {
