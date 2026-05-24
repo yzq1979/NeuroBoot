@@ -44,7 +44,10 @@
   - **Stage 7** 「🔍 全面检查」一键按钮 + skill 系统（U 盘 markdown）+ `--forensic` 取证模式 + 弹窗红框
   - **Stage 8** MCP server 模式（`--mcp-server` 走 stdio JSON-RPC 暴露 12 safe 工具给 Claude Desktop / Cline 等）—— 自实现无 tokio
   - **工具总数**：20（13 safe + 7 dangerous）；**单测**：60/60；**neuroboot.exe**：12.41 MB（crt-static 仍清白）
-- 🔧 **待执行**：ISO 重 build（增量 ~+370 MB，预计新 ISO ~3.3 GB；admin PowerShell 跑 99-build-all.ps1 即可）
+- ✅ **v3 Quick Wins 1-4 代码完成**（2026-05-24）—— prompt caching（TTFT ~93% 降）+ 7-Zip 解压 + BSOD 智能分析（BlueScreenView）+ SKILL YAML frontmatter
+- ✅ **v3 外部工具下载流程完成** —— `tools-dev/download-external-tools.ps1` 一键拉 5 个外部 binary + `04-add-payload.ps1` [2.6/5] ISO build 自动拷贝
+- 📋 **v3 完整路线图（Sprint 2 / 3 / x）** —— 详见 **[docs/TODO-v3.md](docs/TODO-v3.md)**，覆盖 Wi-Fi GUI / Hook 系统 / 持久化 Memory / 文件管理器 / 整盘备份 / 数据恢复 / NirLauncher / Plan Mode / 本地 RAG 等 30+ 任务
+- 🔧 **待执行**：ISO 重 build（增量 ~+370 MB，预计新 ISO ~3.3 GB；admin PowerShell 跑 99-build-all.ps1 即可）+ 外部工具下载
 - 📋 **v2 完整路线图（8 Stage）** —— 详见 **[docs/TODO-v2.md](docs/TODO-v2.md)**（流式输出 / 危险工具 / 本地视觉 / 救援旗舰工具 / UX / MCP；**已排除微软 Phi / QMR / Foundry Local**）
 - 📚 **2026-05 调研汇总** —— 详见 **[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)**（VL 模型选型 / agent 架构 / 微软生态分析 / SmolVLM 不适用证据，~50 轮 web 调研 ~120 个引用 URL）
 

@@ -68,11 +68,15 @@ destructive operations explicit and reviewable.
 | **v2 Stage 7** | done (code) | 2026-05-24 | One-click full check + skill system + --forensic + dangerous dialog red frame |
 | **v2 Stage 8** | done (code) | 2026-05-24 | Hand-rolled MCP server over stdio (--mcp-server), 12 safe tools exposed, no tokio dep |
 | **v2 ISO rebuild** | pending | — | All v2 changes ready; one admin PowerShell build pass produces NeuroBoot.iso ~3.3 GB |
+| **v3 Quick Wins 1-4** | done (code) | 2026-05-24 | Prompt caching (`cache_prompt: true` + `--slot-save-path`, ~93% TTFT cut) + 7-Zip extract + BSOD analyzer (BlueScreenView) + SKILL YAML frontmatter |
+| **v3 external tools flow** | done (code) | 2026-05-24 | `tools-dev/download-external-tools.ps1` one-shot installer for 5 third-party tools + `04-add-payload.ps1` [2.6/5] auto-copy step |
+| **v3.0 roadmap** | planned | — | See **[docs/TODO-v3.md](docs/TODO-v3.md)** — Sprint 2/3 covers Wi-Fi GUI, Hook system, persistent Memory, file manager, full backup/restore, data recovery GUI; ~6~8 weeks |
 
-See **[docs/TODO-v2.md](docs/TODO-v2.md)** for the **8-stage v2 roadmap** (~5.5-9 days of work,
-explicitly excluding Microsoft Phi/QMR/Foundry Local per 2026-05 research), and
-**[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)** for the consolidated research findings
-(VL model selection, agent architecture, Microsoft ecosystem analysis) from ~50 web searches.
+See **[docs/TODO-v3.md](docs/TODO-v3.md)** for the **v3 roadmap (30+ tasks across Sprint 1/2/3)** based on
+4 agent reports (PE rescue + AI capability + judicial forensics feasibility + SmolVLM rejection) from
+~200+ web searches in 2026-05; **[docs/TODO-v2.md](docs/TODO-v2.md)** for the v2 8-stage history (all
+code complete); and **[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)** for the consolidated
+underlying research findings (VL model selection, agent architecture, Microsoft ecosystem analysis).
 
 ## Hardware requirements (target machine running the USB)
 
