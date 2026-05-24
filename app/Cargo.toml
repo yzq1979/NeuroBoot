@@ -1,0 +1,30 @@
+[package]
+name = "neuroboot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# eframe = egui 的应用框架（窗口、事件循环、渲染后端）。
+# 关键：显式启用 glow（OpenGL）后端而不是默认的 wgpu —— 这样在 Windows PE 环境
+# 没有显卡驱动时，能搭配 Mesa3D llvmpipe（纯软件 OpenGL 渲染器）兜底；
+# 默认的 wgpu 在 PE 里走 D3D12 会无法初始化。
+eframe = { version = "0.34.2", default-features = false, features = ["glow", "default_fonts"] }
+
+# HTTP 客户端 —— 与 llama-server 的 OpenAI 兼容端点通信。
+# 用 blocking API + std::thread worker 模式（egui 是 immediate mode，UI 线程不阻塞），
+# 避免引入 tokio 增加复杂度与二进制体积；
+# rustls-tls 比 native-tls 更便携 —— PE 里 Schannel 不一定齐全，rustls 是纯 Rust 自包含 TLS。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+# JSON 序列化 —— OpenAI 兼容 API 的请求/响应体。
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 文件选择对话框 —— v1.0.1+ 图片上传功能的「+ 图片」按钮调用。
+# Windows 平台自动用 Win32 IFileDialog API，无 GTK/Qt 依赖，体积可控。
+# default-features = false 关掉 Linux 的 xdg-portal/gtk3，Windows 一样能用。
+rfd = { version = "0.15", default-features = false }
+
+# Base64 编码 —— v1.0.1+ 图片以 data URL (data:image/jpeg;base64,...) 形式塞
+# OpenAI 兼容 vision API 的 image_url 字段。base64 crate 很小，无 deps。
+base64 = "0.22"

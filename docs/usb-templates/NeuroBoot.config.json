@@ -1,0 +1,39 @@
+{
+    "_comment_top": "NeuroBoot 用户配置 —— 把本文件拷到 U 盘根目录（与 Ventoy 数据分区根目录），PE 启动时 NeuroBoot 会自动加载。也可以在 UI 里点齿轮设置 → 保存到 U 盘，自动生成。",
+    "_comment_remote": "remote_* 四项：在线 AI 端点（任何 OpenAI 兼容服务都可。DeepSeek / 通义千问 / 智谱 / OpenAI 本身 / 自己搭的 vllm）",
+
+    "remote_endpoint": "",
+    "remote_model": "",
+    "remote_api_key": "",
+    "remote_label": "云端",
+
+    "_comment_prefer": "prefer_remote=true（默认）：启动时探测 remote，可达就用 remote；不可达回退本地。false 时直接用本地不探测。",
+    "prefer_remote": true,
+
+    "_comment_local": "local_* 两项：本地 llama-server 配置（一般不用改，除非你跑了多个 server 或换了端口）",
+    "local_endpoint": "http://127.0.0.1:8080",
+    "local_model": "qwen3-4b-instruct",
+
+    "_comment_sysprompt": "system_prompt_override：非空时覆盖内置 system prompt（可以让 NeuroBoot 用你定制的人设）。null 用默认。",
+    "system_prompt_override": null,
+
+    "_comment_examples": "下面是常见在线 AI 端点的填法（取消注释 + 填 api_key）",
+    "_example_deepseek": {
+        "remote_endpoint": "https://api.deepseek.com",
+        "remote_model": "deepseek-chat",
+        "remote_api_key": "sk-填你的 deepseek key",
+        "remote_label": "DeepSeek"
+    },
+    "_example_qwen_dashscope": {
+        "remote_endpoint": "https://dashscope.aliyuncs.com/compatible-mode",
+        "remote_model": "qwen-plus",
+        "remote_api_key": "sk-填你的通义千问 key",
+        "remote_label": "通义"
+    },
+    "_example_zhipu": {
+        "remote_endpoint": "https://open.bigmodel.cn/api/paas",
+        "remote_model": "glm-4-flash",
+        "remote_api_key": "你的智谱 key.xxx",
+        "remote_label": "智谱"
+    }
+}

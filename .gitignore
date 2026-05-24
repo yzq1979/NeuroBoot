@@ -1,0 +1,39 @@
+# Rust 编译产物
+target/
+**/target/
+
+# 本地大模型（GB 级，不入 git）
+models/
+
+# 开发机辅助工具 —— 排除下载的二进制 + 解压目录，保留我们写的 .ps1 脚本
+tools-dev/llama-cpp/
+tools-dev/mesa-extract/
+tools-dev/ventoy/
+tools-dev/*.exe
+tools-dev/*.7z
+tools-dev/*.zip
+
+# PE 构建相关 —— 体积大或机器相关产物
+pe-build/source-iso/
+pe-build/workspace/
+pe-build/output/*.iso
+pe-build/build-all.log
+pe-build/admin-wrapper.ps1
+pe-build/admin-debug.log
+pe-build/test-admin-result.txt
+
+# Payload 子目录里是编译产物或下载的二进制，不入 git，但保留目录本身
+pe-build/payload/neuroboot/
+pe-build/payload/llama-cpp/
+pe-build/payload/mesa/
+pe-build/payload/drivers/
+# 注：pe-build/payload/crt-redist/ **入 git** —— 17 个微软可再发行的 CRT DLL
+# (~1.8 MB)，让任何人 clone 后无需重跑 collect-crt-redist.ps1 就能 build
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
