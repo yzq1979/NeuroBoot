@@ -15,8 +15,9 @@ tools-dev/*.zip
 
 # 外部第三方工具（v3 Quick Win + Stage 6）—— license/体积差异不入 git
 # 由 tools-dev/download-external-tools.ps1 按需下载到 tools/<name>/ 后 ISO build
-# 时被 pe-build/build-scripts/04-add-payload.ps1 [2.6/5] 段自动拷进 PE
-tools/
+# 时被 pe-build/build-scripts/04-add-payload.ps1 [2.6/5] 段自动拷进 PE。
+# 注意前导斜杠：只匹配根目录的 tools/，不匹配 app/src/tools/（Rust 源码）
+/tools/
 
 # PE 构建相关 —— 体积大或机器相关产物
 pe-build/source-iso/
