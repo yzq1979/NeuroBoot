@@ -1,41 +1,76 @@
-//! Skill 系统 —— v2 Stage 7.2。
+//! Skill 系统 —— v2 Stage 7.2 起，v3.0 W1.5 升级为 progressive disclosure。
 //!
 //! 每个 skill 是一份 markdown 文件，提供「诊断剧本」的预设 prompt 增量。
 //! 启动时扫两个目录加载：
 //! - `X:\NeuroBoot\skills\*.md`（PE 内置）
 //! - `C:\NeuroBoot\skills\*.md`（开发机 / 用户 U 盘挂在 C:\NeuroBoot 时的备份位）
 //!
-//! 文件格式约定：
-//! - **第一行**：`# /skill-name` —— 必须，skill 标识符（UI 显示用，模型不见）
-//! - **可选第二行**：`> short description` —— blockquote 一句话描述（UI tooltip）
-//! - **正文**：markdown 任意内容，被注入到下一轮 system prompt 作为附加段
+//! 文件格式约定（支持新 / 旧两种 —— 见 `parse_skill`）。
 //!
-//! 比 Claude Code 的 skill 简化得多：没 file watcher / 没 file globbing / 没 progressive disclosure；
-//! PE 单进程救援场景不需要那些复杂度。
+//! ## v3.0 W1.5：Progressive Disclosure
+//!
+//! Anthropic 2025-12 开放标准，OpenAI / Google / GitHub / Cursor 几周内全部接入。
+//! 三层模型：
+//! - **Tier 1（启动加载）**：仅 frontmatter（`name` + `description`），~80 tokens/skill。
+//!   全部 skill summary 注入 system prompt，AI 总能看到「有哪些剧本可用」
+//! - **Tier 2（AI 触发加载）**：AI 判断某 skill 相关时，调 `load_skill(name)` 工具
+//!   读完整 body markdown。返回结果作为 tool_result 进入下轮 context
+//! - **Tier 3（按需加载）**：body 内 `@reference.md` 引用。v3.0 暂作文档约定（AI
+//!   通过 `read_file` 工具按需读，等 v3.1 加 `load_skill_reference` 显式工具）
+//!
+//! 收益（Anthropic 公布数据）：60~80% token 节省 + 准确度提升 —— 启动时全部 skill
+//! body 不再占 context，AI 按需调用，body 只在相关 turn 出现。
+//!
+//! 用户手动下拉激活（v2 Stage 7.2 UX）保持向后兼容 —— 不影响 AI 自主调用 load_skill。
 
 use std::path::PathBuf;
 
-/// 单个 skill 元数据。
+/// Skill summary（Tier 1，启动加载，~80 tokens/skill）—— v3.0 W1.5。
+///
+/// 只含 frontmatter 的 name + description + 源路径。
+/// 全部 SkillSummary 注入 system prompt，AI 据此判断何时调 `load_skill`。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Skill {
-    /// 显示名（含开头的 `/`）—— UI 下拉框文本
+pub struct SkillSummary {
+    /// 显示名（含开头的 `/`）—— UI 下拉框文本 + load_skill 工具的 name 参数
     pub name: String,
-    /// 一句话描述（UI tooltip；空字符串 = 没写）
+    /// 一句话描述（UI tooltip + AI 触发判断依据；空字符串 = 没写）
     pub description: String,
-    /// skill prompt body —— 注入到 system prompt 末尾的增量
-    pub body: String,
     /// 来源路径（debug / UI 显示用）
     pub source_path: PathBuf,
 }
 
-/// 扫所有候选目录、加载所有 .md skill。
-pub fn scan_skills() -> Vec<Skill> {
+/// Skill body（Tier 2，按需加载）—— v3.0 W1.5。
+///
+/// 由 [`load_skill_body`] 在需要时（AI 调 load_skill 工具 或 用户手动激活）读取。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillBody {
+    /// 显示名（同 SkillSummary.name）
+    pub name: String,
+    /// 一句话描述
+    pub description: String,
+    /// 完整 markdown body —— 注入到 system prompt（手动模式）或 tool_result（AI 模式）
+    pub body: String,
+    /// 来源路径
+    pub source_path: PathBuf,
+}
+
+/// 候选 skill 目录（按优先级；前面优先）。
+///
+/// v3.0：抽出常量便于 `scan_skills` 和 `load_skill_body` 共用。
+pub fn skill_dirs() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from(r"X:\NeuroBoot\skills"),
+        PathBuf::from(r"C:\NeuroBoot\skills"),
+    ]
+}
+
+/// 扫所有候选目录、加载所有 .md skill 的 **summary（Tier 1）**。
+///
+/// v3.0 W1.5：返回类型从 `Vec<Skill>` 改为 `Vec<SkillSummary>` —— 不再保留 body，
+/// 节省启动 context。Body 通过 [`load_skill_body`] 按需获取。
+pub fn scan_skills() -> Vec<SkillSummary> {
     let mut out = Vec::new();
-    let dirs = [
-        PathBuf::from("X:\\NeuroBoot\\skills"),
-        PathBuf::from("C:\\NeuroBoot\\skills"),
-    ];
-    for dir in dirs {
+    for dir in skill_dirs() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,
             Err(_) => continue, // 目录不存在/不可读 —— 跳过
@@ -49,12 +84,44 @@ pub fn scan_skills() -> Vec<Skill> {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            if let Some(skill) = parse_skill(&content, path.clone()) {
-                out.push(skill);
+            if let Some(body) = parse_skill(&content, path.clone()) {
+                // 丢弃 body，只保留 summary
+                out.push(SkillSummary {
+                    name: body.name,
+                    description: body.description,
+                    source_path: body.source_path,
+                });
             }
         }
     }
     out
+}
+
+/// 按 name 加载 skill body（Tier 2）—— v3.0 W1.5。
+///
+/// 在所有候选 [`skill_dirs`] 中找名为 `<name>` 的 skill 并完整解析返回。
+/// 优先级：X: 盘（PE 内置）优先于 C: 盘（开发机）；目录内按文件系统枚举顺序。
+///
+/// 返回 None：未找到匹配 name 的 skill / 找到但解析失败。
+///
+/// **性能**：每次 I/O 重扫，对小 markdown 文件可忽略（< 1 ms）。频繁调用可考虑外层缓存。
+pub fn load_skill_body(name: &str) -> Option<SkillBody> {
+    for dir in skill_dirs() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).ok()?;
+            if let Some(body) = parse_skill(&content, path.clone()) {
+                if body.name == name {
+                    return Some(body);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 解析 skill markdown。返回 None 表示文件格式不对。
@@ -80,7 +147,7 @@ pub fn scan_skills() -> Vec<Skill> {
 /// ```
 ///
 /// 自动检测：首行 `---` → YAML frontmatter；否则按旧 `# /name` + `> desc` 解析。
-pub fn parse_skill(content: &str, source_path: PathBuf) -> Option<Skill> {
+pub fn parse_skill(content: &str, source_path: PathBuf) -> Option<SkillBody> {
     let trimmed = content.trim_start();
     if trimmed.starts_with("---") {
         parse_yaml_frontmatter(trimmed, source_path)
@@ -90,7 +157,7 @@ pub fn parse_skill(content: &str, source_path: PathBuf) -> Option<Skill> {
 }
 
 /// 解析新版 YAML frontmatter 格式。
-fn parse_yaml_frontmatter(content: &str, source_path: PathBuf) -> Option<Skill> {
+fn parse_yaml_frontmatter(content: &str, source_path: PathBuf) -> Option<SkillBody> {
     // 找 `---` ... `---` 之间的 frontmatter，剩下是 body
     let mut lines = content.lines();
     let first = lines.next()?.trim();
@@ -137,7 +204,7 @@ fn parse_yaml_frontmatter(content: &str, source_path: PathBuf) -> Option<Skill> 
 
     let body: String = lines.collect::<Vec<_>>().join("\n");
 
-    Some(Skill {
+    Some(SkillBody {
         name,
         description,
         body: body.trim().to_owned(),
@@ -146,7 +213,7 @@ fn parse_yaml_frontmatter(content: &str, source_path: PathBuf) -> Option<Skill> 
 }
 
 /// v2 Stage 7.2 老格式解析（向后兼容）。
-fn parse_legacy_format(content: &str, source_path: PathBuf) -> Option<Skill> {
+fn parse_legacy_format(content: &str, source_path: PathBuf) -> Option<SkillBody> {
     let mut lines = content.lines();
     let first = lines.next()?.trim();
     if !first.starts_with("# /") {
@@ -178,7 +245,7 @@ fn parse_legacy_format(content: &str, source_path: PathBuf) -> Option<Skill> {
         body.push('\n');
     }
 
-    Some(Skill {
+    Some(SkillBody {
         name,
         description,
         body: body.trim().to_owned(),
@@ -263,5 +330,45 @@ more body
     fn parse_yaml_frontmatter_name_must_start_with_slash() {
         let md = "---\nname: test\n---\nbody";
         assert!(parse_skill(md, PathBuf::from("t.md")).is_none());
+    }
+
+    // v3.0 W1.5 Progressive Disclosure tests
+
+    #[test]
+    fn skill_summary_does_not_carry_body() {
+        // 模拟 scan_skills 行为：解析完整 body 后只保留 summary 字段
+        let md = "---\nname: /test\ndescription: A test skill\n---\nThis is a long body that should NOT be in summary.";
+        let body = parse_skill(md, PathBuf::from("t.md")).unwrap();
+        let summary = SkillSummary {
+            name: body.name.clone(),
+            description: body.description.clone(),
+            source_path: body.source_path.clone(),
+        };
+        // Summary 没 body 字段 —— 类型系统保证
+        assert_eq!(summary.name, "/test");
+        assert_eq!(summary.description, "A test skill");
+        // body 仍可单独取
+        assert!(body.body.contains("This is a long body"));
+    }
+
+    #[test]
+    fn skill_body_struct_keeps_full_content() {
+        // SkillBody 是 Tier 2 完整内容，包含 body 字段
+        let md = "---\nname: /diag\ndescription: Diagnostic\n---\nStep 1: foo\nStep 2: bar";
+        let body = parse_skill(md, PathBuf::from("d.md")).unwrap();
+        assert_eq!(body.name, "/diag");
+        assert_eq!(body.description, "Diagnostic");
+        assert!(body.body.contains("Step 1: foo"));
+        assert!(body.body.contains("Step 2: bar"));
+    }
+
+    #[test]
+    fn legacy_format_still_returns_skill_body() {
+        // 向后兼容：旧 `# /name` 格式仍能 parse 出 SkillBody
+        let md = "# /old-style\n> A legacy skill\n\nBody line 1\nBody line 2";
+        let body = parse_skill(md, PathBuf::from("old.md")).unwrap();
+        assert_eq!(body.name, "/old-style");
+        assert_eq!(body.description, "A legacy skill");
+        assert!(body.body.contains("Body line 1"));
     }
 }

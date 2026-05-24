@@ -29,9 +29,9 @@ use llm::endpoint::{detect_endpoints, DetectedEndpoints, EndpointConfig};
 use tools::ToolRegistry;
 use ui::{
     draw_power_confirmation_dialog, draw_settings_dialog, install_chinese_fonts, launch_cmd,
-    launch_file_manager, load_path_as_attached, open_log_dir, pick_image_files, render_message,
-    scan_skills, scan_user_prompts, AttachedImage, ChatMessage, CommonMarkCache, PowerAction,
-    SettingsAction, SettingsBuffer, Skill, StatusBarState, UserPrompt,
+    launch_file_manager, load_path_as_attached, load_skill_body, open_log_dir, pick_image_files,
+    render_message, scan_skills, scan_user_prompts, AttachedImage, ChatMessage, CommonMarkCache,
+    PowerAction, SettingsAction, SettingsBuffer, SkillSummary, StatusBarState, UserPrompt,
 };
 
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -215,6 +215,8 @@ fn run_as_mcp_server() {
     registry.register(Box::new(tools::safe::read_smart::ReadSmart));
     registry.register(Box::new(tools::safe::extract_archive::ExtractArchive));
     registry.register(Box::new(tools::safe::analyze_minidump::AnalyzeMinidump));
+    // v3.0 W1.5: Progressive disclosure tier 2 工具
+    registry.register(Box::new(tools::safe::load_skill::LoadSkill));
 
     mcp::run_mcp_server(Arc::new(registry));
     std::process::exit(0);
@@ -254,8 +256,10 @@ struct NeuroBootApp {
     readonly_mode: bool,
     /// v2 Stage 7.3 取证模式：蕴含 readonly + 额外限制（disk read-only mount 等由 PE 启动配置控制）
     forensic_mode: bool,
-    /// v2 Stage 7.2 加载的 skills（启动时扫一次）
-    skills: Vec<Skill>,
+    /// v2 Stage 7.2 加载的 skill **summaries**（启动时扫一次；只有 frontmatter）。
+    /// v3.0 W1.5：从 `Vec<Skill>` 改为 `Vec<SkillSummary>`，body 按需 lazy load
+    /// （AI 调 load_skill 工具 或 用户手动激活时通过 load_skill_body 读）。
+    skills: Vec<SkillSummary>,
     /// 当前激活的 skill 索引（None = 不注入 skill；Some(i) = 用 skills[i] 增量到 system prompt）
     active_skill_idx: Option<usize>,
 }
@@ -303,6 +307,8 @@ impl Default for NeuroBootApp {
         // v3 Quick Win 2 + 3 新增 safe 工具
         registry.register(Box::new(tools::safe::extract_archive::ExtractArchive));
         registry.register(Box::new(tools::safe::analyze_minidump::AnalyzeMinidump));
+        // v3.0 W1.5: Progressive disclosure tier 2 工具
+        registry.register(Box::new(tools::safe::load_skill::LoadSkill));
         // dangerous 工具：只读模式下完全不注册
         if !readonly_mode {
             // v1 dangerous
@@ -895,13 +901,40 @@ impl NeuroBootApp {
         // 新一轮 agent 任务前重置 cancel 标志
         self.cancel_flag.store(false, Ordering::Relaxed);
 
-        // v2 Stage 7.2: skill 增量注入 system prompt（如选了 skill）
+        // v2 Stage 7.2 + v3.0 W1.5: skill 注入 system prompt
         let mut system_prompt = self.system_prompt.clone();
-        if let Some(skill) = self.active_skill_idx.and_then(|i| self.skills.get(i)) {
-            system_prompt.push_str("\n\n---\n\n# 当前激活 skill: ");
-            system_prompt.push_str(&skill.name);
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&skill.body);
+
+        // v3.0 W1.5 Tier 1：始终列出**所有** skill summary（progressive disclosure）。
+        // AI 据此判断何时调 load_skill(name) 拿完整 body。每条 ~80 tokens。
+        if !self.skills.is_empty() {
+            system_prompt.push_str(
+                "\n\n---\n\n\
+                 # 可用 skill（诊断剧本目录）\n\
+                 \n\
+                 system 列了下面所有 skill 的 name + 一句话描述。当用户请求匹配某 skill 的描述时，\
+                 **先调 `load_skill(name=\"/...\")` 工具拿完整剧本**，再按剧本步骤执行（调对应工具 + 总结）。\
+                 不匹配的请求直接回答 / 调常规工具，不要无谓 load_skill。\n\
+                 \n",
+            );
+            for s in &self.skills {
+                if s.description.is_empty() {
+                    system_prompt.push_str(&format!("- `{}`\n", s.name));
+                } else {
+                    system_prompt.push_str(&format!("- `{}`: {}\n", s.name, s.description));
+                }
+            }
+        }
+
+        // v2 Stage 7.2 兼容路径：用户从 UI 下拉框手动激活某 skill，
+        // 把它的完整 body 直接灌进 system prompt（不依赖 AI 自己 load_skill）。
+        // v3.0 W1.5：从 self.skills[i].body 改为 lazy load 当前 active 那条。
+        if let Some(summary) = self.active_skill_idx.and_then(|i| self.skills.get(i)) {
+            if let Some(body) = load_skill_body(&summary.name) {
+                system_prompt.push_str("\n\n---\n\n# 用户手动激活 skill: ");
+                system_prompt.push_str(&body.name);
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&body.body);
+            }
         }
         // v2 Stage 7.3: 取证模式额外约束
         if self.forensic_mode {
