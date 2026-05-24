@@ -29,6 +29,16 @@ impl Tool for BootrecRebuildBcd {
          \n\
          **Returns**: bootrec stdout（找到的 Windows 安装清单 + 是否加进 BCD）。\n\
          \n\
+         **Example output**: ```\n\
+         Scanning all disks for Windows installations.\n\
+         Please wait, since this may take a while...\n\
+         \n\
+         Successfully scanned Windows installations.\n\
+         Total identified Windows installations: 1\n\
+         [1] C:\\Windows\n\
+         Add installation to boot list? Yes/No/All:\n\
+         ```\n\
+         \n\
          **Notes**: 工具会**交互式提问**「是否把这个 Windows 加进 BCD」—— 在 PE 里跑时**不会真的弹问** \
          （因为 stdin 非 tty），可能直接跳过；如果跳过，下一步可以用 `bcdboot C:\\Windows /s S: /f UEFI`（v2.x 加）；\
          BCD 错误重写后**必须重启**才能验证主系统是否能起来。"
@@ -50,5 +60,16 @@ impl Tool for BootrecRebuildBcd {
         let script = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 bootrec /rebuildbcd"#;
         run_ps(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&BootrecRebuildBcd);
     }
 }

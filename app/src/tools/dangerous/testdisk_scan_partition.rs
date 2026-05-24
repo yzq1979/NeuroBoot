@@ -45,6 +45,15 @@ impl Tool for TestdiskScanPartition {
          \n\
          **Returns**: 启动确认信息。**实际操作在 TestDisk 自身 TUI 里完成**。\n\
          \n\
+         **Example output**: ```\n\
+         已启动 TestDisk TUI 在新窗口。操作指引：\n\
+         1. Create new log（默认）\n\
+         2. 选要扫的物理硬盘\n\
+         3. 选分区表类型（一般 Intel/PC 或 EFI GPT）\n\
+         4. Analyse → Quick Search\n\
+         ...\n\
+         ```\n\
+         \n\
          **Notes**: TestDisk 启动后进 TUI（text UI），按提示选盘 → 选分区表类型 → Analyse → \
          Deeper Search。**全程只扫**，扫完显示找到的分区供用户选「Write」（这一步会改分区表，不可逆）。\
          **强烈建议**：操作前先备份当前损坏盘的完整镜像（用 ddrescue / wbadmin）。\
@@ -86,5 +95,16 @@ impl Tool for TestdiskScanPartition {
             6. 没找到的话 Deeper Search\n\
             7. 确认无误后 Write（不可逆，**强烈建议先 ddrescue 备份**）"
             .to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&TestdiskScanPartition);
     }
 }

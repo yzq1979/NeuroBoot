@@ -40,11 +40,16 @@ impl Tool for DeletePath {
          **Returns**: 成功返回「(已移到回收站) <trash 路径>」；路径不存在返回「(不存在) ...」；\
          命中 preflight 黑名单返回 error (PermissionDenied)。\n\
          \n\
-         **执行流程**: UI 必弹确认弹窗 → 用户必须人工点「确认执行」 → 才真移动。\
-         用户点取消 → 工具返回（用户拒绝）→ **不要重试相同操作**，问用户是否换个方式。\n\
+         **Example output**: ```\n\
+         (已移到回收站) 从 D:\\old-installer.exe 移到 X:\\trash\\20260524-153012-4783\\old-installer.exe\n\
+         如需恢复：剪切 X:\\trash\\...\\old-installer.exe 回原位置；如需彻底删除，UI 点「清空 trash」按钮\n\
+         ```\n\
          \n\
-         **恢复**: 移到回收站后，用户可在 UI 顶栏「日志」附近找到「清空 trash」按钮彻底删；\
-         在彻底删之前用户可以从 `X:\\trash\\<timestamp>\\` 手动 cut 回去。"
+         **Notes**:\n\
+         - **执行流程**: UI 必弹确认弹窗 → 用户必须人工点「确认执行」 → 才真移动。\
+         用户点取消 → 工具返回（用户拒绝）→ **不要重试相同操作**，问用户是否换个方式\n\
+         - **恢复**: 移到回收站后，用户可在 UI 顶栏「日志」附近找到「清空 trash」按钮彻底删；\
+         在彻底删之前用户可以从 `X:\\trash\\<timestamp>\\` 手动 cut 回去"
     }
 
     fn safety(&self) -> SafetyClass {
@@ -110,5 +115,16 @@ Write-Output "如需恢复：剪切 $dest 回原位置；如需彻底删除，UI
         );
 
         run_ps(&script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&DeletePath);
     }
 }

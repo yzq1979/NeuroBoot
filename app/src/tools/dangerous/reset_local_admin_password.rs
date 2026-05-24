@@ -40,13 +40,19 @@ impl Tool for ResetLocalAdminPassword {
          - `sam_path` (string, required): SAM hive 路径。典型：`C:\\Windows\\System32\\config\\SAM`\n\
          - `username` (string, required): 要清密码的账户名（如 `Administrator`、`admin`、用户自定义）\n\
          \n\
-         **Returns**: NTPWEdit stdout（含「password cleared」/「account unlocked」/ 错误码）。\n\
+         **Returns**: 启动确认信息（NTPWEdit 是 GUI 工具，实际操作在弹窗里完成）。\n\
+         \n\
+         **Example output**: ```\n\
+         已启动 NTPWEdit GUI（pid 不返回，请在弹窗里：\n\
+         1. 选中账户 `Administrator`\n\
+         2. 点「Change password」清空（不输入新密码就是清空）\n\
+         ...\n\
+         ```\n\
          \n\
          **Notes**: SAM hive 路径在 PE 里挂载主系统盘后才能访问；典型 `C:\\Windows\\System32\\config\\SAM` \
-         实际是主系统盘下；NTPWEdit 是 freeware（GPL-ish，自用 OK，公开重分发需复查 license）；\
+         实际是主系统盘下；NTPWEdit 是 freeware（自用 OK，公开重分发需复查 license）；\
          **需要 NeuroBoot ISO 带 NTPWEdit.exe**（默认不带，按 docs/BUILD.md 下载放到 \
-         `X:\\NeuroBoot\\tools\\NTPWEdit\\NTPWEdit.exe`）；如果未找到 binary，会返回 NotFound 错误，\
-         告诉用户去 docs/BUILD.md 看下载步骤。"
+         `X:\\NeuroBoot\\tools\\NTPWEdit\\NTPWEdit.exe`）；未找到 binary 返回 NotFound。"
     }
 
     fn safety(&self) -> SafetyClass {
@@ -109,5 +115,16 @@ impl Tool for ResetLocalAdminPassword {
              4. 关闭 NTPWEdit\n\
              5. 重启回主系统验证（重启前确认主系统未挂载 SAM）"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ResetLocalAdminPassword);
     }
 }
