@@ -37,6 +37,15 @@ impl Tool for ExtractArchive {
          \n\
          **Returns**: 解压结果摘要（文件数 / 总大小 / 错误如有）。\n\
          \n\
+         **Example output**: ```\n\
+         解压完成 → X:\\NeuroBoot\\tools\\drivers-extracted\n\
+         Everything is Ok\n\
+         Folders: 12\n\
+         Files: 248\n\
+         Size:       154892832\n\
+         Compressed: 47821304\n\
+         ```\n\
+         \n\
          **Notes**: 7za.exe 默认不在 NeuroBoot ISO；按 docs/BUILD.md 「v3 Quick Win 工具下载」节下载\
          （~1.5 MB LGPL/BSD3 可商用）放到 X:\\NeuroBoot\\tools\\7zip\\7za.exe；\
          解压使用 `-y` (假设 yes)，不会卡交互；密码加密包暂不支持（v3.x 加 password 参数）。"
@@ -136,5 +145,16 @@ impl Tool for ExtractArchive {
             dest_dir.display(),
             stdout.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ExtractArchive);
     }
 }

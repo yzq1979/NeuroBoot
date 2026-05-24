@@ -49,6 +49,12 @@ impl Tool for AnalyzeMinidump {
          - `CausedByAddress`: 崩溃地址\n\
          - `FileDescription` / `Company`: 驱动厂商\n\
          \n\
+         **Example output**（截选 8 个核心字段）: `[{\"DumpFile\":\"052426-12345-01.dmp\",\
+         \"CrashTime\":\"5/24/2026 2:32:11 PM\",\"BugCheckString\":\"DRIVER_IRQL_NOT_LESS_OR_EQUAL\",\
+         \"BugCheckCode\":\"0x000000d1\",\"CausedByDriver\":\"nvlddmkm.sys\",\
+         \"FileDescription\":\"NVIDIA Windows Kernel Mode Driver\",\"Company\":\"NVIDIA Corporation\",\
+         \"FileVersion\":\"32.0.15.6094\"}]`\n\
+         \n\
          **Notes**: BlueScreenView.exe 默认不在 NeuroBoot ISO；按 docs/BUILD.md 「v3 Quick Win 工具下载」节\
          下载（~83 KB freeware，非商用 / 公开分发要注意 license）放到 X:\\NeuroBoot\\tools\\BlueScreenView\\；\
          **关键关联**：BugCheckString = `DRIVER_*` 时看 `CausedByDriver`（驱动问题）；\
@@ -179,5 +185,16 @@ impl Tool for AnalyzeMinidump {
         }
 
         Ok(serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&AnalyzeMinidump);
     }
 }

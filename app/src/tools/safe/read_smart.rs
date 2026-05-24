@@ -40,6 +40,14 @@ impl Tool for ReadSmart {
          **Returns**: smartctl 完整文本 —— 包含 Power_On_Hours、Reallocated_Sector_Ct、\
          Wear_Leveling_Count（SSD 寿命）、Temperature_Celsius、Self-test 历史等。\n\
          \n\
+         **Example output**（截选关键 3 行）: ```\n\
+         === START OF SMART DATA SECTION ===\n\
+         SMART overall-health self-assessment test result: PASSED\n\
+           9 Power_On_Hours          0x0032   099   099   000    Old_age   Always       -       1234\n\
+         173 Wear_Leveling_Count     0x0033   098   098   000    Pre-fail  Always       -       12\n\
+         194 Temperature_Celsius     0x0022   065   043   000    Old_age   Always       -       35\n\
+         ```\n\
+         \n\
          **Notes**: smartctl.exe 默认不在 NeuroBoot ISO 里；按 docs/BUILD.md 下载放 \
          `X:\\NeuroBoot\\tools\\smartmontools\\smartctl.exe`；smartmontools 是 GPL 可商用；\
          **关键看的字段**：Reallocated_Sector_Ct > 0 = 已有坏块；\
@@ -102,5 +110,16 @@ impl Tool for ReadSmart {
             ));
         }
         Ok(stdout)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ReadSmart);
     }
 }
