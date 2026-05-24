@@ -43,7 +43,7 @@ try {
         'ADK base'          = Test-Path 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools'
         'WinPE add-on'      = Test-Path 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Windows Preinstallation Environment'
         'llama.cpp b9294'   = Test-Path "$root\tools-dev\llama-cpp\b9294\llama-server.exe"
-        'Qwen GGUF'         = Test-Path "$root\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+        'Qwen GGUF (Q5_K_M)' = Test-Path "$root\models\Qwen3-4B-Instruct-2507-Q5_K_M.gguf"
         'Mesa opengl32'     = Test-Path "$root\tools-dev\mesa-extract\x64\opengl32.dll"
         'Mesa libgallium'   = Test-Path "$root\tools-dev\mesa-extract\x64\libgallium_wgl.dll"
         'NeuroBoot Cargo.toml' = Test-Path "$root\app\Cargo.toml"

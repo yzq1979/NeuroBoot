@@ -426,15 +426,16 @@ LLM 看到 kind 能决策（如 PermissionDenied → 告诉用户切 admin；Not
 > 详细调研背景见 **[RESEARCH-2026-05.md](RESEARCH-2026-05.md)**
 > 总工作量：5.5~9 天；推荐每会话做 1~2 个 stage + 1 次 ISO 重 build
 
-#### Stage 1：Agent 基础健壮性 ⚡ 性价比之王 (~0.5 天)
+#### Stage 1：Agent 基础健壮性 ⚡ 性价比之王 (~0.5 天) ✅ 已完成（待 ISO 重 build 生效）
 **理由**：纯改 prompt / 配置 / 换模型文件，无代码风险；调研一致认定收益巨大；给后续所有 stage 立标准。
 
-- [ ] 1.1 **重写 system prompt**：从当前 ~150 字扩到 800~1500 token；markdown 结构化（Role / Tools / Constraints / 输出格式 / 1-2 个 few-shot）；关键加 PE 环境约束段（"你跑在 Windows PE 救援环境，磁盘可能损坏，X: 是 ramdisk 只读，服务不一定可用，不要假设主系统行为"）
-- [ ] 1.2 **12 个工具 description 按 [Anthropic spec](https://www.anthropic.com/engineering/writing-tools-for-agents) 重写**：每个加「When to use」段；list 类工具加可选 `format: "concise"|"detailed"`；显式参数名；error 给可操作指引
-- [ ] 1.3 **system prompt 加高危关键词拦截规则**：path 含 `system32` / `Windows` / `Program Files` 的删除请求 → 模型层先拒，不调 delete_path
-- [ ] 1.4 **量化升级 Qwen3-4B Q4_K_M → Q5_K_M** (~3 GB) —— 4B 小模型 Q4 是下限，Q5 在 tool-calling 上肉眼可见提升。仅换 GGUF 文件 + 改 startnet.cmd 引用
-- [ ] 1.5 **startnet.cmd 加 `--no-mmap` + `-t <物理核数>`** —— U 盘 IO 友好 + 超线程不拖累矩阵运算
-- [ ] 1.6 cargo test + dumpbin verify + commit + push (无 ISO build；Q5 模型换文件单独 build)
+- [x] 1.1 **重写 system prompt** —— 从 ~150 字扩到 ~1200 token；markdown 五段结构（身份 / 运行环境 / 工具准则 / 危险纪律 / 回答格式）；加 PE 环境约束 + few-shot 示例
+- [x] 1.2 **12 个工具 description 按 [Anthropic spec](https://www.anthropic.com/engineering/writing-tools-for-agents) 重写** —— 每个加「When to use」+「Parameters」+「Returns」+「Notes」结构化段；delete_path 加「When NOT to use」枚举
+- [x] 1.3 **system prompt 含高危关键词拦截规则** —— 在第 1.1 一并加入「危险操作纪律」段
+- [x] 1.4 **量化升级 Qwen3-4B Q4_K_M → Q5_K_M (2.69 GB)** —— 从 ModelScope unsloth 仓库下载，SHA256 校验通过；已在 `models/Qwen3-4B-Instruct-2507-Q5_K_M.gguf`；99-build-all.ps1 预检查同步更新
+- [x] 1.5 **startnet.cmd 加 `--no-mmap` + `-t 4`** —— U 盘 IO 友好 + 物理核数（非超线程逻辑核）；GGUF 路径同步指向 Q5_K_M
+- [x] 1.6 cargo test 34/34 + dumpbin verify + commit 已 push（d062691 + Q5 commit 等待）
+- [ ] **1.7 ISO 重 build**（待 Stage 2 一起做，或用户单独触发）—— 增量 ~+370 MB，新 ISO ~3.3 GB
 
 #### Stage 2：流式 SSE 输出 🔥 用户最痛 (~0.5~1 天)
 **理由**：当前 `stream: false` → 长答复 30~60s 卡屏；改 agent loop 核心路径，单独成阶段防回归。

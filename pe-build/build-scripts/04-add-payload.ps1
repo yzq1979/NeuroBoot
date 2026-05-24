@@ -11,7 +11,11 @@ try {
     $payloadNeuroBoot  = 'C:\NeuroBoot\pe-build\payload\neuroboot'
     $llamaSrc          = 'C:\NeuroBoot\tools-dev\llama-cpp\b9294'
     $crtRedist         = 'C:\NeuroBoot\pe-build\payload\crt-redist'
-    $modelSrc          = 'C:\NeuroBoot\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf'
+    # v2 Stage 1.3: upgrade Q4_K_M (2.32 GB) -> Q5_K_M (2.69 GB).
+    # Q5_K_M shows hands-down better tool-calling accuracy on 4B models
+    # per llama.cpp / unsloth guidance (Q4 is the lower bound for 4B).
+    # +370 MB to ISO size, acceptable tradeoff.
+    $modelSrc          = 'C:\NeuroBoot\models\Qwen3-4B-Instruct-2507-Q5_K_M.gguf'
 
     if (-not (Test-Path "$mount\Windows\System32\startnet.cmd")) {
         throw "Mount dir does not look like a mounted PE (no startnet.cmd). Did stage 6.4 mount succeed?"
@@ -73,16 +77,16 @@ try {
     #      logical cores (hyperthreaded) is anti-optimal for matmul-heavy
     #      LLM inference (per llama.cpp official benchmark guidance).
     #      User can edit this file on USB before boot to tune per-machine.
-    # NB: -m points to Q4_K_M for now; Stage 1.3 upgrade to Q5_K_M will
-    #     update this filename. Search "Qwen3-4B-Instruct-2507-Q*_K_M.gguf"
-    #     to bump quant level later without touching the rest of the cmd.
+    # v2 Stage 1.3 (2026-05-24): -m bumped to Q5_K_M GGUF (2.69 GB)
+    # Q4_K_M is Q4-tier lower bound for 4B models; Q5_K_M ships visibly
+    # better tool-calling reliability per llama.cpp/unsloth guidance.
     $llamaCmd = @'
 @echo off
 REM Launches llama-server with the bundled Qwen3-4B GGUF on PE.
 REM X: is the PE ramdisk drive letter.
 cd /d X:\NeuroBoot\llama-cpp
 llama-server.exe ^
-  -m X:\NeuroBoot\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf ^
+  -m X:\NeuroBoot\models\Qwen3-4B-Instruct-2507-Q5_K_M.gguf ^
   -a qwen3-4b-instruct ^
   --host 127.0.0.1 ^
   --port 8080 ^

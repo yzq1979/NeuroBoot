@@ -34,7 +34,7 @@
   - **2 启动器按钮**：cmd（cd 到 X:\NeuroBoot）/ 文件管理器（试 explorer → cmd dir 回落）
   - **图片上传**：+ 图片按钮选 png/jpg/webp，OpenAI vision 多模态 schema 发送，VL 模型自动检测（gpt-4o / claude-3 / qwen-vl / deepseek-vl 等关键词）
 - ✅ **v2 Stage A 完成** —— Markdown 渲染 (egui_commonmark 0.23) + 8 个新 safe 工具（共 12 个工具）。**未重 build ISO**
-- 🚧 **v2 Stage 1 进行中** —— Agent 基础健壮性：system prompt 重写 + 12 工具 description 按 Anthropic spec 重写 + Q5_K_M 量化升级
+- ✅ **v2 Stage 1 代码完成** —— Agent 基础健壮性：system prompt 重写（~1200 token 五段结构）+ 12 工具 description 按 Anthropic spec 重写 + Q5_K_M GGUF (2.69 GB) 已下载到 models/ + startnet.cmd 加 `--no-mmap` 和 `-t 4`。**待重 build ISO 生效**
 - 📋 **v2 完整路线图（8 Stage）** —— 详见 **[docs/TODO-v2.md](docs/TODO-v2.md)**（流式输出 / 危险工具 / 本地视觉 / 救援旗舰工具 / UX / MCP；**已排除微软 Phi / QMR / Foundry Local**）
 - 📚 **2026-05 调研汇总** —— 详见 **[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)**（VL 模型选型 / agent 架构 / 微软生态分析 / SmolVLM 不适用证据，~50 轮 web 调研 ~120 个引用 URL）
 
