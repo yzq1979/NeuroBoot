@@ -24,7 +24,7 @@
 ## 当前状态
 
 - ✅ **v1.0 完成** —— `NeuroBoot.iso` 2.89 GB（2026-05-23）
-- ✅ **v1.0.1 完成** —— `NeuroBoot.iso` 2.93 GB（2026-05-24），4 个真测 P0 修复 + 5 个用户反馈追加功能：
+- ✅ **v1.0.1+ 完成** —— `NeuroBoot.iso` 2.93 GB（2026-05-24），4 个真测 P0 修复 + 5 个用户反馈追加功能：
   - CRT redist 修 llama-server PE 闪退；startnet healthcheck 替代 timeout 60
   - 中文输入兜底（6 快捷问题 + U 盘 prompts.txt 下拉）
   - 在线 AI 端点 ⚙ 设置面板 + config.json 持久化
@@ -33,7 +33,10 @@
   - **状态栏**：时钟 · 内存 X/Y MB · 本地 IP（5s 刷新）
   - **2 启动器按钮**：cmd（cd 到 X:\NeuroBoot）/ 文件管理器（试 explorer → cmd dir 回落）
   - **图片上传**：+ 图片按钮选 png/jpg/webp，OpenAI vision 多模态 schema 发送，VL 模型自动检测（gpt-4o / claude-3 / qwen-vl / deepseek-vl 等关键词）
-- 🔧 **v1.0.2 / v2 计划** —— 详见 [docs/TODO-v2.md](docs/TODO-v2.md)（流式输出 / Markdown 渲染 / 扩工具集 / smartmontools 打包 / 等）
+- ✅ **v2 Stage A 完成** —— Markdown 渲染 (egui_commonmark 0.23) + 8 个新 safe 工具（共 12 个工具）。**未重 build ISO**
+- 🚧 **v2 Stage 1 进行中** —— Agent 基础健壮性：system prompt 重写 + 12 工具 description 按 Anthropic spec 重写 + Q5_K_M 量化升级
+- 📋 **v2 完整路线图（8 Stage）** —— 详见 **[docs/TODO-v2.md](docs/TODO-v2.md)**（流式输出 / 危险工具 / 本地视觉 / 救援旗舰工具 / UX / MCP；**已排除微软 Phi / QMR / Foundry Local**）
+- 📚 **2026-05 调研汇总** —— 详见 **[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)**（VL 模型选型 / agent 架构 / 微软生态分析 / SmolVLM 不适用证据，~50 轮 web 调研 ~120 个引用 URL）
 
 ## 硬件要求（目标机 / 真测环境）
 

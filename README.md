@@ -58,10 +58,13 @@ destructive operations explicit and reviewable.
 |---|---|---|---|
 | v1.0    | 2.89 GB | 2026-05-23 | First bootable build, USB real-machine tested |
 | v1.0.1+ | 2.93 GB | 2026-05-24 | 4 P0 fixes from USB real test + 5 user-feedback additions (status bar, system launchers, power controls, image upload, healthcheck startup) |
+| v2 Stage A | – (no rebuild) | 2026-05-24 | Markdown rendering (egui_commonmark) + 8 new safe diagnostic tools (12 total) |
+| **v2 Stage 1** | **in progress** | 2026-05-24+ | System prompt hardening + tool description spec rewrite + Q5_K_M quant upgrade |
 
-See **[docs/TODO-v1.0.1-fixes.md](docs/TODO-v1.0.1-fixes.md)** for the v1.0.1 checklist (all
-P0 items checked) and **[docs/TODO-v2.md](docs/TODO-v2.md)** for the v2 roadmap (streaming output,
-Markdown rendering, expanded tool set, smartmontools, read-only mode, etc.).
+See **[docs/TODO-v2.md](docs/TODO-v2.md)** for the **8-stage v2 roadmap** (~5.5-9 days of work,
+explicitly excluding Microsoft Phi/QMR/Foundry Local per 2026-05 research), and
+**[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)** for the consolidated research findings
+(VL model selection, agent architecture, Microsoft ecosystem analysis) from ~50 web searches.
 
 ## Hardware requirements (target machine running the USB)
 

@@ -416,26 +416,116 @@ LLM 看到 kind 能决策（如 PermissionDenied → 告诉用户切 admin；Not
 - [x] **系统启动器**：cmd / 文件管理器按钮（原非路线图）
 - [x] **电源控制**：重启 / 关机 / 退出按钮 + 确认弹窗（原非路线图）
 
-### v2.0 必做（P0，预计 1~2 个月）
-1. [ ] **流式输出** （Part B.1）—— 最影响体验的一项；当前 `stream: false` 一次性返回
-2. [ ] **Markdown 渲染** （Part D.2）—— UI 质感跃升；当前 ui.label plain text
-3. [x] **~~healthcheck-based startup~~** —— v1.0.1+ 已完成
-4. [ ] **核心 safe 工具扩充**：A.2.2/3/4/6 至少各加 2~3 个（磁盘/网络/进程/dump）—— v1.0.1+ 未动，仍 4 个工具
-5. [ ] **核心 dangerous 工具**：A.3.2 (chkdsk/sfc/dism) + A.3.3 (启动修复) + A.3.4 (Defender)
-6. [ ] **smartmontools 打包到 PE**（A.4）
-7. [x] **~~WinPE-FontSupport-ZH-CN.cab~~** —— v1.0.1+ 已完成
-8. [ ] **「只读模式」启动选项**（C.4）—— `neuroboot.exe --readonly` 禁所有 dangerous 工具
-9. [ ] **System prompt 强化** + 高危关键词拦截（F.1）
+### v2.0 已完成 Stage A（2026-05-24）
+- [x] **Stage A1 Markdown 渲染** —— egui_commonmark 0.23，Assistant CommonMarkViewer，User 纯文本，Tool 等宽
+- [x] **Stage A2 工具集扩充 (8 新工具)** —— list_partitions / list_volumes / read_ip_config / list_network_adapters / list_processes_top / list_services / list_minidumps / list_recent_shutdowns
+- [x] **Stage A 副产物** —— tools/ps_helper.rs 抽 run_ps + run_ps_json_array，新工具一律走 helper
 
-### v2.1 重要（P1，预计再 1 个月）
+### v2 实施路线（2026-05-24 调研后确定，**已排除微软 Phi / QMR / Foundry Local**）
+
+> 详细调研背景见 **[RESEARCH-2026-05.md](RESEARCH-2026-05.md)**
+> 总工作量：5.5~9 天；推荐每会话做 1~2 个 stage + 1 次 ISO 重 build
+
+#### Stage 1：Agent 基础健壮性 ⚡ 性价比之王 (~0.5 天)
+**理由**：纯改 prompt / 配置 / 换模型文件，无代码风险；调研一致认定收益巨大；给后续所有 stage 立标准。
+
+- [ ] 1.1 **重写 system prompt**：从当前 ~150 字扩到 800~1500 token；markdown 结构化（Role / Tools / Constraints / 输出格式 / 1-2 个 few-shot）；关键加 PE 环境约束段（"你跑在 Windows PE 救援环境，磁盘可能损坏，X: 是 ramdisk 只读，服务不一定可用，不要假设主系统行为"）
+- [ ] 1.2 **12 个工具 description 按 [Anthropic spec](https://www.anthropic.com/engineering/writing-tools-for-agents) 重写**：每个加「When to use」段；list 类工具加可选 `format: "concise"|"detailed"`；显式参数名；error 给可操作指引
+- [ ] 1.3 **system prompt 加高危关键词拦截规则**：path 含 `system32` / `Windows` / `Program Files` 的删除请求 → 模型层先拒，不调 delete_path
+- [ ] 1.4 **量化升级 Qwen3-4B Q4_K_M → Q5_K_M** (~3 GB) —— 4B 小模型 Q4 是下限，Q5 在 tool-calling 上肉眼可见提升。仅换 GGUF 文件 + 改 startnet.cmd 引用
+- [ ] 1.5 **startnet.cmd 加 `--no-mmap` + `-t <物理核数>`** —— U 盘 IO 友好 + 超线程不拖累矩阵运算
+- [ ] 1.6 cargo test + dumpbin verify + commit + push (无 ISO build；Q5 模型换文件单独 build)
+
+#### Stage 2：流式 SSE 输出 🔥 用户最痛 (~0.5~1 天)
+**理由**：当前 `stream: false` → 长答复 30~60s 卡屏；改 agent loop 核心路径，单独成阶段防回归。
+
+- [ ] 2.1 `llm/client.rs` 改 reqwest blocking 一次性返回 → SSE EventSource reader（`reqwest-eventsource` crate）
+- [ ] 2.2 `agent/mod.rs` 改 worker：边读 chunk 边 send `AgentEvent::TokenChunk(s)`；tool_calls 跨 chunk 按 `index` 在 HashMap 累积；只有 `finish_reason: "tool_calls"` 时才 dispatch
+- [ ] 2.3 **关键兼容性兜底**：llama.cpp build 8233+ 的 `tool_calls[].function.arguments` 输出 JSON object 而非 string（[issue #20198](https://github.com/ggml-org/llama.cpp/issues/20198)）。Rust 解析双形态都吃
+- [ ] 2.4 UI 端：current assistant message append chunk + `ctx.request_repaint()` 触发增量重绘
+- [ ] 2.5 Markdown 渲染：实测卡顿时换 `mdstream` crate（增量解析）
+- [ ] 2.6 加「停止生成」按钮（Cancellation token → worker poll → 中断 reqwest）
+- [ ] 2.7 cargo test + commit + push + ISO 重 build
+
+#### Stage 3：tool_result clearing + 工具执行日志 (~0.5 天)
+**理由**：替代当前整 turn truncation，对小模型最稳；audit trail 让用户事后能复盘。
+
+- [ ] 3.1 `agent/truncate.rs` 改写：保 system + 保最近 N（默认 4）个 tool_use 完整 + 老 tool_result 替换成 `[cleared, can re-call]` 占位符
+- [ ] 3.2 新加 `tools/audit_log.rs`：每次 tool execute 写一行 JSONL 到 `X:\NeuroBoot\logs\tool-YYYYMMDD.jsonl`，字段 `{ts, tool, args, safety, user_confirmed, exit_status, duration_ms, result_summary}`
+- [ ] 3.3 UI 顶栏加「查看日志」按钮 → 打开 `X:\logs\` 在 cmd 里 `type` 文件
+- [ ] 3.4 ToolError 分类 enum（PermissionDenied / NotFound / Timeout / ParseError / InvalidArgument / ExternalCommandFailed / Other）
+- [ ] 3.5 cargo test + commit + push + ISO 重 build
+
+#### Stage 4：危险工具 + 只读模式 + 数据保护 💎 救援核心 (~1 天)
+**理由**：NeuroBoot 真正成为「PE 救援盘」的关键；当前只有 1 个危险工具。
+
+- [ ] 4.1 **5 个新 dangerous 工具**（每个走确认弹窗）：
+  - [ ] `run_chkdsk_fix` (`chkdsk <drive> /f /r`)
+  - [ ] `run_sfc_scannow` (`sfc /scannow`)
+  - [ ] `run_dism_restorehealth` (`DISM /Online /Cleanup-Image /RestoreHealth`)
+  - [ ] `defender_offline_scan` (`MpCmdRun.exe -Scan -ScanType 2 -BootSectorScan`) —— **填补 ESET/Norton/Bitdefender 救援盘 EOL 后的真空地带**
+  - [ ] `bootrec_rebuild_bcd` (`bootrec /rebuildbcd`)
+- [ ] 4.2 **`delete_path` 改 Aider 风格**：move to `X:\trash\<timestamp>\<orig-name>`；UI 加「清空 trash」按钮；模型看不见这层包装
+- [ ] 4.3 **加 `--readonly` 启动开关**：所有 dangerous 工具直接拒（不弹窗）；顶栏显示「只读模式」徽章
+- [ ] 4.4 Ventoy 启动菜单加「NeuroBoot（只读模式）」选项
+- [ ] 4.5 高危关键词 pre-check：tool registry 加层，args 里 path 含 `system32` 等直接拒
+- [ ] 4.6 cargo test + commit + push + ISO 重 build
+
+#### Stage 5：本地视觉模型 Qwen3-VL-2B 🎯 差异化 (~1 天 + PE 真测)
+**理由**：把 vision 能力从「依赖云端 VL」拓到「本地 + 中文 + 离线」；NeuroBoot 真正差异化护城河。
+
+- [ ] **5.0 预研**：在主开发机 CPU 上对比 **MiniCPM-V 4.6 (1.3B Q4 529 MB)** vs **Qwen3-VL-2B (Q4 1.11 GB + mmproj 700 MB)**：准备 5 张中文样本图（BIOS / BSOD / 设备管理器 / 错误对话框 / 截图），实测中文 OCR 准确率（人工评分）+ CPU 推理时间 + RAM 峰值。结果决定 5.1 用哪个
+- [ ] 5.1 升级 ISO 内 llama-server 到 **b6907+**（Qwen3-VL PR #16780 + 性能修复）
+- [ ] 5.2 下载放入 ISO 的视觉模型 GGUF + mmproj
+- [ ] 5.3 Rust 端 `llm/endpoint.rs` 加 `local-vl` 端点，base_url `http://127.0.0.1:8081/v1`（避开 8080）
+- [ ] 5.4 实现 **lazy spawn**：vision llama-server 不预启，用户首次上传图片才起 → 5 分钟空闲自动回收
+- [ ] 5.5 settings_dialog.rs 默认 VL 端点改本地（保留云端 fallback）
+- [ ] 5.6 `dumpbin /DEPENDENTS` 验证新 llama-server.exe 不依赖 PE 缺失 DLL
+- [ ] 5.7 PE 真机 benchmark：5 张样本图实测端到端响应时间，记录 `docs/vl-benchmark.md`
+- [ ] 5.8 cargo test + commit + push + ISO 重 build（ISO 增量 ~+1.6 GB）
+
+#### Stage 6：救援旗舰工具集 🏆 功能补全 (~1 天)
+**理由**：让 NeuroBoot 进入「传统 PE 救援盘」功能完整度；填补 Linux 救援盘的核心工具空白。
+
+- [ ] 6.1 打包 **NTPWEdit**（~500 KB portable）到 `pe-build/payload/tools/` + 新加 `reset_local_admin_password` AI 工具（dangerous，确认弹窗）—— PE 救援盘旗舰功能
+- [ ] 6.2 打包 **TestDisk + PhotoRec for Windows**（~5 MB portable，GPL v2+）+ 新加 `winfr_recover_regular` / `testdisk_scan_partition` AI 工具
+- [ ] 6.3 打包 **smartmontools**（smartctl.exe，~5 MB，GPL）+ 新加 `read_smart` AI 工具
+- [ ] 6.4 更新 NOTICE 文件追加这 3 个工具的 attribution
+- [ ] 6.5 docs/BUILD.md 加这些 portable 工具的下载步骤
+- [ ] 6.6 cargo test + commit + push + ISO 重 build（增量 ~+12 MB）
+
+#### Stage 7：UX 升级 + skill 系统 (~0.5~1 天)
+- [ ] 7.1 顶栏加「**一键全面检查**」按钮（参考 HP AI Companion Perform tab）→ 并行触发 8~10 个只读工具 → 结构化报告
+- [ ] 7.2 **skill 系统**（轻量版 Claude Code skill）：启动时扫 U 盘 `X:\NeuroBoot\skills\*.md` + ISO 内置 6 个 skill（`/diagnose-boot.md` / `/diagnose-network.md` / `/diagnose-bsod.md` / `/recover-files.md` / `/scan-malware.md` / `/reset-password.md`）
+- [ ] 7.3 **取证模式**（WinFE-style）：`--forensic` 启动开关 + Ventoy 菜单选项 → 禁所有写盘工具 + 强制 `--readonly`
+- [ ] 7.4 UI 视觉：dangerous 工具确认弹窗加红框 + 屏幕背景轻微变暗
+- [ ] 7.5 cargo test + commit + push + ISO 重 build
+
+#### Stage 8：MCP 协议 server 模式 🌐 长期布局 (~1~2 天)
+**理由**：MCP 是 Anthropic + Microsoft + OpenAI 共推的开放协议（**不是微软专属**）；NeuroBoot 暴露 12+ 工具成 MCP server，未来 Claude Desktop / Cline / Continue.dev 都能调
+
+- [ ] 8.1 评估 `mcp-rust-sdk` crate 或 `rmcp` 官方 Rust SDK 成熟度
+- [ ] 8.2 NeuroBoot 加 `--mcp-server` 启动模式：暴露 stdio + http transport
+- [ ] 8.3 12+ 工具自动暴露为 MCP tools（复用现有 Tool trait + parameters_schema）
+- [ ] 8.4 文档：如何在 Claude Desktop 配置 NeuroBoot MCP server / 如何用 Claude Code 通过 MCP 调 NeuroBoot 工具
+- [ ] 8.5 cargo test + commit + push
+
+### 已明确**不做**的方向（基于 2026-05 调研）
+
+- [N] **Microsoft Phi / Phi Silica / Foundry Local** —— 锁 Copilot+ PC NPU + 中国不可用 + PE 不兼容
+- [N] **Microsoft QMR 集成** —— QMR 不是 LLM，跑在 WinRE 不是 WinPE，本质规则引擎
+- [N] **SmolVLM 系列** —— 完全不支持中文，PE 中文用户场景核心需求失败
+- [N] **多 agent 编排（AutoGen / CrewAI / MetaGPT）** —— 单用户单任务不需要
+- [N] **Background agent 并行** —— PE 内存紧 + 软件渲染 OOM
+- [N] **NPU first 路线** —— NeuroBoot CPU first 是核心护城河
+- [N] **完整 Claude Code skill watch + 跨 session memory** —— PE 重启即 wipe
+
+### v2.1 重要（P1，待 v2.0 Stage 1~8 完成后再评估）
 - [ ] Sysinternals / BlueScreenView 打包
 - [ ] Tool trait 扩展（requires_admin / category / version）
-- [ ] ToolError 分类
-- [ ] 工具执行日志
-- [ ] 历史对话保存
-- [x] **~~端点 A+C UI 配置面板~~** —— v1.0.1+ 已完成（升级到 P0 的紧迫性）
+- [ ] 历史对话保存（U 盘导出）
 - [ ] 多硬件驱动适配
-- [ ] 单测覆盖率提升（当前 31 测试，覆盖 7 个模块；目标 50%+ 代码覆盖率）
+- [ ] 单测覆盖率提升（当前 34 测试 → 目标 50%+ 覆盖率）
 
 ### v2.2 后续（P2）
 - [ ] ARM64 build
@@ -445,7 +535,6 @@ LLM 看到 kind 能决策（如 PermissionDenied → 告诉用户切 admin；Not
 - [ ] 用户手册 / 工具参考手册
 - [ ] **语音输入**（远程录音上传 → 云端 STT；PE 本地录音受 ADK 无 audio stack 限制）
 - [ ] **应用层拼音 IME**（rime-luna-pinyin 词典 ~2.4 MB，~600 行 Rust）
-- [ ] LICENSE / NOTICE 已有（v1.0.1+ 已加 Apache-2.0），仅需后续维护 attribution
 
 ---
 
