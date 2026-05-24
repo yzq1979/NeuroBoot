@@ -33,3 +33,8 @@ base64 = "0.22"
 # 必须用 0.23 才能匹配 egui 0.34（0.21 会拉进 egui 0.32 导致类型不兼容）。
 # default-features = false 关掉 better_syntax_highlighting (拉 syntect ~10 MB)。
 egui_commonmark = { version = "0.23", default-features = false, features = ["pulldown_cmark"] }
+
+[dev-dependencies]
+# 临时目录 —— v3.0 W6-7 memory 模块单测用（path traversal 校验 + 6 命令在隔离 tmp 跑）。
+# 仅 dev-deps 不进 release binary。
+tempfile = "3"

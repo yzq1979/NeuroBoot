@@ -27,6 +27,7 @@ use std::thread;
 
 use serde_json::Value;
 
+use crate::hooks::{self, HooksConfig};
 use crate::llm::client::{blocking_chat_completion_stream, StreamEvent};
 use crate::llm::openai::{
     ChatCompletionRequest, OpenAiMessage, ToolCall, ToolCallFunction, ToolDefinition,
@@ -45,6 +46,8 @@ pub struct AgentJob {
     pub tool_registry: Arc<ToolRegistry>,
     /// 共享取消标志 —— UI 点「停止生成」会 set 为 true，worker 检测后清理退出
     pub cancel: Arc<AtomicBool>,
+    /// v3.0 W6-7 hooks 配置（PreToolUse / PostToolUse / Stop 用）
+    pub hooks_config: Arc<HooksConfig>,
 }
 
 /// Agent 边跑边向 UI 发送的事件。
@@ -164,6 +167,13 @@ struct ToolCallAccumulator {
     arguments: String, // 跨 chunk append
 }
 
+/// v3.0 W6-7：发 Done 前先跑 Stop hook（exit code 不影响流程）。
+/// 取代之前裸的 `tx.send(AgentEvent::Done)`。
+fn finish_turn(tx: &mpsc::Sender<AgentEvent>, hooks_config: &HooksConfig) {
+    let _ = hooks::run_stop(hooks_config);
+    let _ = tx.send(AgentEvent::Done);
+}
+
 /// 在 worker 线程里跑 agent 循环。
 fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
     // 构造发给 LLM 的初始消息：system + UI 历史
@@ -183,7 +193,7 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
     for _ in 0..MAX_ROUNDS {
         // 取消提前检查
         if job.cancel.load(Ordering::Relaxed) {
-            let _ = tx.send(AgentEvent::Done);
+            finish_turn(tx, &job.hooks_config);
             return;
         }
 
@@ -281,7 +291,7 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
 
         // 取消时 finish_reason 可能没收到 —— 干净退出
         if job.cancel.load(Ordering::Relaxed) {
-            let _ = tx.send(AgentEvent::Done);
+            finish_turn(tx, &job.hooks_config);
             return;
         }
 
@@ -329,14 +339,14 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
 
         // 无 tool_calls = 已是最终答案
         if tool_calls.is_empty() {
-            let _ = tx.send(AgentEvent::Done);
+            finish_turn(tx, &job.hooks_config);
             return;
         }
 
         // ----- 执行每个 tool call -----
         for tc in &tool_calls {
             if job.cancel.load(Ordering::Relaxed) {
-                let _ = tx.send(AgentEvent::Done);
+                finish_turn(tx, &job.hooks_config);
                 return;
             }
             let tool_name = tc.function.name.as_str();
@@ -433,7 +443,17 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
                     }
                 }
             } else {
-                match job.tool_registry.get(tool_name) {
+                // v3.0 W6-7: PreToolUse hook 在 tool.execute() 之前（也在 dangerous 确认弹窗之前）
+                // 跑 —— hook 拒绝则不弹窗、不执行，直接把拒绝原因合成 tool result
+                let (pre_outcome, _pre_execs) =
+                    hooks::run_pre_tool_use(&job.hooks_config, tool_name, raw_args);
+                if let hooks::HookOutcome::Block { reason } = pre_outcome {
+                    exec_duration = exec_start.elapsed();
+                    success = false;
+                    safety_str = "hook_blocked";
+                    format!("（hook 拒绝）{reason}")
+                } else {
+                    match job.tool_registry.get(tool_name) {
                 None => {
                     exec_duration = exec_start.elapsed();
                     success = false;
@@ -498,7 +518,21 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
                     }
                 },
                 }
+                }
             };
+
+            // v3.0 W6-7: PostToolUse hook —— exit code 仅记日志，不回灌 LLM
+            // （工具结果已成型，PostHook 不应能"事后否决"）
+            // 跳过 propose_plan（plan_proposal safety class，meta 工具不触发）
+            if safety_str != "plan_proposal" {
+                let _post_execs = hooks::run_post_tool_use(
+                    &job.hooks_config,
+                    tool_name,
+                    raw_args,
+                    success,
+                    &result_text,
+                );
+            }
 
             // v2 Stage 3.2：写审计日志（失败静默，不影响工具结果回传）
             let audit = audit_log::build_audit(
@@ -525,7 +559,7 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
         "（提示）Agent 已达到最大轮数限制（5 轮），强制结束。\
          如需继续，请重新提问或拆分任务。",
     )));
-    let _ = tx.send(AgentEvent::Done);
+    finish_turn(tx, &job.hooks_config);
 }
 
 /// 把 ToolRegistry 转成 OpenAI tools 清单；空 registry 返回 None。

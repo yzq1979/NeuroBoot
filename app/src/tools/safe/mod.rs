@@ -20,6 +20,7 @@ pub mod list_volumes;
 pub mod list_winre_status;
 pub mod load_skill;
 pub mod lookup_error_code;
+pub mod memory;
 pub mod propose_plan;
 pub mod read_event_log_errors;
 pub mod read_ip_config;

@@ -11,8 +11,10 @@
 //! - dangerous 工具触发模态确认弹窗，用户必须点「确认执行」才会动手
 
 mod agent;
+mod hooks;
 mod llm;
 mod mcp;
+mod memory;
 mod tools;
 mod ui;
 
@@ -106,6 +108,38 @@ const DEFAULT_SYSTEM_PROMPT: &str = r##"# 身份
 2. 用户 **Approve** → tool 返回「已批准」→ 你按 steps 依次调实际工具，完成后给中文总结
 3. 用户 **Reject** → tool 返回「拒绝」→ **不要原样重提同一 plan**，重新思考或问用户为什么拒绝
 4. **批准后不要再次 propose_plan**，直接调实际工具
+
+---
+
+# 持久化记忆 memory（v3.0 W6-7）
+
+你有 `memory` 工具能跨 PE 重启 / 跨会话保留信息（写在 U 盘的 `NeuroBoot\memories\`）。
+
+**何时主动调 `memory create / str_replace`**（写）：
+- 用户**明确说**「记住 X」「下次再来时还要看这个」「帮我记一下」
+- 用户告诉你**机器层面的持久事实**（硬件型号 / 盘符布局 / 已知问题 / 主系统装的关键软件等），未来会话有价值
+- **不要**主动记单次会话的临时上下文（聊到的临时数字 / 当前 in-progress 状态等）—— 这些在对话历史里就够了
+
+**何时调 `memory view`**（读）：
+- 用户问历史相关问题（「上次说过那个 X 是什么」「之前我让你记的那个」）
+- 怀疑当前问题跟用户硬件 / 历史故障相关时（如用户问蓝屏 → view MEMORY.md 看有没有「机器经常 7B」之类记录）
+- **不要**：每次开口都 view —— 启动时 MEMORY.md 已自动注入 system prompt 顶部，重复 view 浪费 context
+
+**写 memory 之前先 view** 现有内容，避免破坏用户已有的结构。修改单条用 `str_replace`（精确替换），追加用 `insert`（指定行号）。
+
+`memory` 是 safe 工具 —— 不弹窗确认。但写入会持久化到 U 盘，**慎重**，不要写敏感信息（密码、SN 这种除非用户明确同意）。
+
+---
+
+# Hooks（v3.0 W6-7）—— 你不直接调，但要知道
+
+PE 用户可以在 U 盘配置 `hooks.json` 让 NeuroBoot 在特定时机跑自定义命令：
+- **SessionStart**：启动时跑（输出已注入到本 system prompt 顶部的 `# SessionStart hook 注入` 段）
+- **PreToolUse**：调任何工具前跑，hook 非零退出 = **拒绝该工具**（你看到 `（hook 拒绝）...` 就别原样重试）
+- **PostToolUse**：调任何工具后跑（你不直接感知，仅记日志）
+- **Stop**：每轮对话结束时跑
+
+如果 PreToolUse hook 拒绝了你的工具调用，告诉用户「该工具被 hook 阻止了」+ 拒绝原因，问用户是要改 hook 还是换方式。
 
 ---
 
@@ -245,6 +279,8 @@ fn run_as_mcp_server() {
     registry.register(Box::new(tools::safe::find_large_files::FindLargeFiles));
     registry.register(Box::new(tools::safe::read_recent_installs::ReadRecentInstalls));
     registry.register(Box::new(tools::safe::lookup_error_code::LookupErrorCode));
+    // v3.0 W6-7: 持久化 memory（U 盘 NeuroBoot\memories\ 下 6 命令派发）
+    registry.register(Box::new(tools::safe::memory::Memory));
 
     mcp::run_mcp_server(Arc::new(registry));
     std::process::exit(0);
@@ -292,6 +328,9 @@ struct NeuroBootApp {
     skills: Vec<SkillSummary>,
     /// 当前激活的 skill 索引（None = 不注入 skill；Some(i) = 用 skills[i] 增量到 system prompt）
     active_skill_idx: Option<usize>,
+    /// v3.0 W6-7 hooks 配置（从 U 盘 hooks.json 加载；启动时一次扫描）。
+    /// Arc 让 agent worker 线程也能 clone 拿（PreToolUse / PostToolUse / Stop 用）
+    hooks_config: Arc<hooks::HooksConfig>,
 }
 
 impl Default for NeuroBootApp {
@@ -348,6 +387,8 @@ impl Default for NeuroBootApp {
         registry.register(Box::new(tools::safe::read_recent_installs::ReadRecentInstalls));
         // v3.0 W7: error code 查询（MVP 版用 hardcoded 表；W5-6 升级 RAG）
         registry.register(Box::new(tools::safe::lookup_error_code::LookupErrorCode));
+        // v3.0 W6-7: 持久化 memory（U 盘 NeuroBoot\memories\ 下 6 命令派发）
+        registry.register(Box::new(tools::safe::memory::Memory));
         // dangerous 工具：只读模式下完全不注册
         if !readonly_mode {
             // v1 dangerous
@@ -386,17 +427,64 @@ impl Default for NeuroBootApp {
             "当前用本地端点。".to_owned()
         };
 
-        let system_prompt = effective
+        let mut system_prompt = effective
             .system_prompt_override
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_owned());
+
+        // v3.0 W6-7: 加载 U 盘 hooks.json（找不到 = 空 config）+ 跑 SessionStart hook
+        let (hooks_config, hooks_source_hint) = match hooks::scan_hooks_config() {
+            Some((cfg, path)) => {
+                let counts = format!(
+                    "SessionStart={} PreToolUse={} PostToolUse={} Stop={}",
+                    cfg.hooks.session_start.len(),
+                    cfg.hooks.pre_tool_use.len(),
+                    cfg.hooks.post_tool_use.len(),
+                    cfg.hooks.stop.len(),
+                );
+                (cfg, format!("hooks.json: {} ({counts})", path.display()))
+            }
+            None => (
+                hooks::HooksConfig::default(),
+                "hooks.json: 未找到（U 盘 NeuroBoot\\hooks.json 或 NeuroBoot.hooks.json）".to_owned(),
+            ),
+        };
+
+        let session_start_execs = hooks::run_session_start(&hooks_config);
+        let session_start_stdout = hooks::collect_stdout(&session_start_execs);
+        let session_start_hint = if session_start_execs.is_empty() {
+            String::new()
+        } else {
+            let ok = session_start_execs.iter().filter(|e| e.success()).count();
+            format!(
+                "\nSessionStart 跑了 {} 个 hook（{} 成功）",
+                session_start_execs.len(),
+                ok
+            )
+        };
+        if !session_start_stdout.is_empty() {
+            system_prompt.push_str("\n\n---\n\n# SessionStart hook 注入\n\n");
+            system_prompt.push_str(&session_start_stdout);
+        }
+
+        // v3.0 W6-7: 加载持久化 MEMORY.md 并拼到 system prompt（启动时一次）
+        let memory_md_hint = match memory::load_memory_md() {
+            Some(md) => {
+                let bytes = md.as_bytes().len();
+                system_prompt.push_str("\n\n---\n\n# 持久化 MEMORY.md（从 U 盘 NeuroBoot\\memories\\ 自动加载）\n\n");
+                system_prompt.push_str(&md);
+                format!("\nMEMORY.md 已加载（{bytes} 字节）—— AI 可在对话中读到")
+            }
+            None => String::new(),
+        };
 
         let welcome = format!(
             "你好，我是 NeuroBoot 神启。{endpoint_hint}\n\
              已注册 4 个工具：3 个只读诊断（硬盘 / 系统配置 / 系统日志错误）+ 1 个危险工具 delete_path。\n\
              - {source_hint}\n\
              - {probe_hint}\n\
+             - {hooks_source_hint}{session_start_hint}{memory_md_hint}\n\
              如要修改在线 AI 端点配置，请点顶栏齿轮按钮 ⚙。{prompts_hint}"
         );
 
@@ -429,6 +517,7 @@ impl Default for NeuroBootApp {
             forensic_mode,
             skills: scan_skills(),
             active_skill_idx: None,
+            hooks_config: Arc::new(hooks_config),
         }
     }
 }
@@ -997,6 +1086,7 @@ impl NeuroBootApp {
             messages: self.messages.clone(),
             tool_registry: Arc::clone(&self.tool_registry),
             cancel: Arc::clone(&self.cancel_flag),
+            hooks_config: Arc::clone(&self.hooks_config),
         };
         self.pending_response = Some(spawn_agent_request(job));
     }
