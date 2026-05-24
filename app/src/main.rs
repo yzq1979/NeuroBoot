@@ -12,6 +12,7 @@
 
 mod agent;
 mod llm;
+mod mcp;
 mod tools;
 mod ui;
 
@@ -171,6 +172,14 @@ const QUICK_PROMPTS: &[(&str, &str)] = &[
 ];
 
 fn main() -> eframe::Result<()> {
+    // v2 Stage 8: --mcp-server 模式 —— 不启 GUI，stdio JSON-RPC 暴露 safe 工具
+    if std::env::args().any(|a| a == "--mcp-server") {
+        run_as_mcp_server();
+        // 这条路径不返回 eframe::Result（run_as_mcp_server 内 std::process::exit）
+        // 但 Rust 类型系统不知道，所以下面无脑用 Ok(())
+        return Ok(());
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 700.0])
@@ -186,6 +195,27 @@ fn main() -> eframe::Result<()> {
             Ok(Box::<NeuroBootApp>::default())
         }),
     )
+}
+
+/// v2 Stage 8 入口：注册全部 safe 工具后跑 MCP stdio 服务器；阻塞到 stdin EOF。
+fn run_as_mcp_server() {
+    // 跟 GUI 模式一样的 safe 工具集（dangerous 由 mcp.rs 内部过滤）
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(tools::safe::list_disks::ListDisks));
+    registry.register(Box::new(tools::safe::read_system_info::ReadSystemInfo));
+    registry.register(Box::new(tools::safe::read_event_log_errors::ReadEventLogErrors));
+    registry.register(Box::new(tools::safe::list_partitions::ListPartitions));
+    registry.register(Box::new(tools::safe::list_volumes::ListVolumes));
+    registry.register(Box::new(tools::safe::read_ip_config::ReadIpConfig));
+    registry.register(Box::new(tools::safe::list_network_adapters::ListNetworkAdapters));
+    registry.register(Box::new(tools::safe::list_processes_top::ListProcessesTop));
+    registry.register(Box::new(tools::safe::list_services::ListServices));
+    registry.register(Box::new(tools::safe::list_minidumps::ListMinidumps));
+    registry.register(Box::new(tools::safe::list_recent_shutdowns::ListRecentShutdowns));
+    registry.register(Box::new(tools::safe::read_smart::ReadSmart));
+
+    mcp::run_mcp_server(Arc::new(registry));
+    std::process::exit(0);
 }
 
 struct NeuroBootApp {
@@ -266,6 +296,8 @@ impl Default for NeuroBootApp {
         registry.register(Box::new(tools::safe::list_services::ListServices));
         registry.register(Box::new(tools::safe::list_minidumps::ListMinidumps));
         registry.register(Box::new(tools::safe::list_recent_shutdowns::ListRecentShutdowns));
+        // v2 Stage 6 新增 safe 工具（外部 binary 缺失时返回 NotFound）
+        registry.register(Box::new(tools::safe::read_smart::ReadSmart));
         // dangerous 工具：只读模式下完全不注册
         if !readonly_mode {
             // v1 dangerous
@@ -281,6 +313,13 @@ impl Default for NeuroBootApp {
             ));
             registry.register(Box::new(
                 tools::dangerous::bootrec_rebuild_bcd::BootrecRebuildBcd,
+            ));
+            // v2 Stage 6 新增 dangerous 工具（外部 binary 缺失时返回 NotFound）
+            registry.register(Box::new(
+                tools::dangerous::reset_local_admin_password::ResetLocalAdminPassword,
+            ));
+            registry.register(Box::new(
+                tools::dangerous::testdisk_scan_partition::TestdiskScanPartition,
             ));
         }
 

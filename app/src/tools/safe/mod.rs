@@ -15,4 +15,5 @@ pub mod list_services;
 pub mod list_volumes;
 pub mod read_event_log_errors;
 pub mod read_ip_config;
+pub mod read_smart;
 pub mod read_system_info;

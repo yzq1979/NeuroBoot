@@ -388,6 +388,77 @@ C:\NeuroBoot\
 
 ---
 
+## v2 Stage 5：本地视觉模型集成（可选）
+
+NeuroBoot 默认走云端 VL 端点（gpt-4o / claude-3 / qwen-vl-plus / 等）处理「+ 图片」上传。
+要切到**本地**视觉模型（离线场景），需额外下载 Qwen3-VL-2B GGUF + mmproj，并启动第二个 llama-server。
+
+### 下载视觉模型
+
+从 ModelScope 拉（国内速度快 + 无需代理）：
+
+```powershell
+$dest = 'C:\NeuroBoot\models'
+# 主模型 (~1.1 GB)
+curl.exe -L 'https://www.modelscope.cn/models/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q4_K_M.gguf' `
+    -o "$dest\Qwen3-VL-2B-Instruct-Q4_K_M.gguf"
+# 多模态投影 mmproj (~400 MB Q8_0 / ~700 MB F16)
+curl.exe -L 'https://www.modelscope.cn/models/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-Qwen3-VL-2B-Instruct-Q8_0.gguf' `
+    -o "$dest\mmproj-Qwen3-VL-2B-Instruct-Q8_0.gguf"
+```
+
+### 升级 llama.cpp 到 b6907+
+
+Qwen3-VL 在 llama.cpp PR #16780 (2025-10-30) 合入，需要 build **b6907 或更新**。
+
+```powershell
+# 下载 b9294 之后的版本（替换 b9999 为实际 build 号）
+$url = 'https://github.com/ggml-org/llama.cpp/releases/download/b9999/llama-b9999-bin-win-cpu-x64.zip'
+$out = 'C:\NeuroBoot\tools-dev\llama-b9999-bin-win-cpu-x64.zip'
+Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+Expand-Archive $out -DestinationPath 'C:\NeuroBoot\tools-dev\llama-cpp\b9999' -Force
+```
+
+### 启动本地 vision 服务
+
+```powershell
+C:\NeuroBoot\tools-dev\start-llama-vision-server.ps1
+```
+
+监听在 `http://127.0.0.1:8081`，跟主 llama-server (8080) 共存。
+
+### 在 NeuroBoot 切到本地 VL endpoint
+
+点 NeuroBoot 顶栏「⚙ 设置」→ 在「Endpoint URL」填 `http://127.0.0.1:8081`，
+「Model」填 `qwen3-vl-2b` → 保存到 U 盘。下次启动 NeuroBoot 时「+ 图片」按钮就走本地了。
+
+### Lazy spawn（v2.x 路线图）
+
+当前是「用户手工启动 vision server」+「手工切 endpoint」。**未来**：
+- NeuroBoot 检测到「+ 图片」点击时自动起 vision server，5 分钟空闲自动 kill 省 RAM
+- 当前留作 v2.x todo（见 docs/TODO-v2.md Stage 5.x）
+
+### v2 Stage 6 救援工具下载（可选）
+
+3 个旗舰救援工具，默认不在 NeuroBoot ISO 里（避免许可证 / 体积争议）。
+按需自行下载放到 `C:\NeuroBoot\tools\<name>\`，build ISO 时会自动打包到 PE 的 `X:\NeuroBoot\tools\`：
+
+| 工具 | 用途 | 路径 | 下载 |
+|---|---|---|---|
+| **NTPWEdit** ~500 KB | 重置 Windows 本地账户密码 | `tools\NTPWEdit\NTPWEdit.exe` | https://cdslow.org.ru/files/ntpwedit/ntpwedit_0.7_x64.zip |
+| **TestDisk** ~3 MB | 修复 / 恢复分区表 | `tools\testdisk\testdisk_win.exe` | https://www.cgsecurity.org/wiki/TestDisk_Download |
+| **smartmontools** ~5 MB | 详细 SMART 数据 | `tools\smartmontools\smartctl.exe` | https://builds.smartmontools.org/ |
+
+下载后跑：
+```powershell
+# 把 tools/ 拷进 PE payload
+robocopy C:\NeuroBoot\tools C:\NeuroBoot\pe-build\payload\tools /MIR
+```
+然后重 build ISO，3 个工具会出现在 PE 的 `X:\NeuroBoot\tools\` 下。
+NeuroBoot 检测到 binary 存在时对应 AI 工具就能调用；缺失时返回 NotFound 错误指引重看本节。
+
+---
+
 ## 许可证 / License
 
 NeuroBoot 使用 **[Apache License 2.0](../LICENSE)** 许可。第三方组件（Noto Sans SC / llama.cpp / Mesa / Qwen 模型 / Ventoy / Microsoft CRT 等）attribution 详见 **[NOTICE](../NOTICE)**。

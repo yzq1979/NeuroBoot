@@ -34,7 +34,17 @@
   - **2 启动器按钮**：cmd（cd 到 X:\NeuroBoot）/ 文件管理器（试 explorer → cmd dir 回落）
   - **图片上传**：+ 图片按钮选 png/jpg/webp，OpenAI vision 多模态 schema 发送，VL 模型自动检测（gpt-4o / claude-3 / qwen-vl / deepseek-vl 等关键词）
 - ✅ **v2 Stage A 完成** —— Markdown 渲染 (egui_commonmark 0.23) + 8 个新 safe 工具（共 12 个工具）。**未重 build ISO**
-- ✅ **v2 Stage 1 代码完成** —— Agent 基础健壮性：system prompt 重写（~1200 token 五段结构）+ 12 工具 description 按 Anthropic spec 重写 + Q5_K_M GGUF (2.69 GB) 已下载到 models/ + startnet.cmd 加 `--no-mmap` 和 `-t 4`。**待重 build ISO 生效**
+- ✅ **v2 全部 8 个 Stage 代码完成**（2026-05-24，待 ISO 重 build 生效）：
+  - **Stage 1** Agent 基础健壮：system prompt 重写（~1200 token 五段）+ 12 工具 desc Anthropic 规范 + Q5_K_M 量化 + startnet 优化
+  - **Stage 2** 流式 SSE：tool_calls 跨 chunk 累积 + llama.cpp #20198 兼容 + 「停止生成」按钮 + 无 tokio
+  - **Stage 3** tool_result clearing + audit JSONL + ToolError kind enum (7 个)
+  - **Stage 4** 5 新 dangerous 工具 (chkdsk/sfc/dism/Defender/bootrec) + delete_path → 回收站 + `--readonly` + preflight 通用 path 检查
+  - **Stage 5** 本地视觉模型 MVP（已有 ⚙ + 启动脚本 + docs）—— 完整 lazy-spawn 留 v2.x
+  - **Stage 6** 3 救援旗舰工具 wrapper (NTPWEdit / TestDisk / smartctl)，binary 按 docs/BUILD.md 下载
+  - **Stage 7** 「🔍 全面检查」一键按钮 + skill 系统（U 盘 markdown）+ `--forensic` 取证模式 + 弹窗红框
+  - **Stage 8** MCP server 模式（`--mcp-server` 走 stdio JSON-RPC 暴露 12 safe 工具给 Claude Desktop / Cline 等）—— 自实现无 tokio
+  - **工具总数**：20（13 safe + 7 dangerous）；**单测**：60/60；**neuroboot.exe**：12.41 MB（crt-static 仍清白）
+- 🔧 **待执行**：ISO 重 build（增量 ~+370 MB，预计新 ISO ~3.3 GB；admin PowerShell 跑 99-build-all.ps1 即可）
 - 📋 **v2 完整路线图（8 Stage）** —— 详见 **[docs/TODO-v2.md](docs/TODO-v2.md)**（流式输出 / 危险工具 / 本地视觉 / 救援旗舰工具 / UX / MCP；**已排除微软 Phi / QMR / Foundry Local**）
 - 📚 **2026-05 调研汇总** —— 详见 **[docs/RESEARCH-2026-05.md](docs/RESEARCH-2026-05.md)**（VL 模型选型 / agent 架构 / 微软生态分析 / SmolVLM 不适用证据，~50 轮 web 调研 ~120 个引用 URL）
 

@@ -437,79 +437,75 @@ LLM 看到 kind 能决策（如 PermissionDenied → 告诉用户切 admin；Not
 - [x] 1.6 cargo test 34/34 + dumpbin verify + commit 已 push（d062691 + Q5 commit 等待）
 - [ ] **1.7 ISO 重 build**（待 Stage 2 一起做，或用户单独触发）—— 增量 ~+370 MB，新 ISO ~3.3 GB
 
-#### Stage 2：流式 SSE 输出 🔥 用户最痛 (~0.5~1 天)
+#### Stage 2：流式 SSE 输出 🔥 用户最痛 (~0.5~1 天) ✅ 已完成
 **理由**：当前 `stream: false` → 长答复 30~60s 卡屏；改 agent loop 核心路径，单独成阶段防回归。
 
-- [ ] 2.1 `llm/client.rs` 改 reqwest blocking 一次性返回 → SSE EventSource reader（`reqwest-eventsource` crate）
-- [ ] 2.2 `agent/mod.rs` 改 worker：边读 chunk 边 send `AgentEvent::TokenChunk(s)`；tool_calls 跨 chunk 按 `index` 在 HashMap 累积；只有 `finish_reason: "tool_calls"` 时才 dispatch
-- [ ] 2.3 **关键兼容性兜底**：llama.cpp build 8233+ 的 `tool_calls[].function.arguments` 输出 JSON object 而非 string（[issue #20198](https://github.com/ggml-org/llama.cpp/issues/20198)）。Rust 解析双形态都吃
-- [ ] 2.4 UI 端：current assistant message append chunk + `ctx.request_repaint()` 触发增量重绘
-- [ ] 2.5 Markdown 渲染：实测卡顿时换 `mdstream` crate（增量解析）
-- [ ] 2.6 加「停止生成」按钮（Cancellation token → worker poll → 中断 reqwest）
-- [ ] 2.7 cargo test + commit + push + ISO 重 build
+- [x] 2.1 `llm/client.rs` 改 reqwest blocking → SSE 手解析（无 tokio 引入，自实现 ~80 行）
+- [x] 2.2 `agent/mod.rs` worker：流式 send TokenChunk + tool_calls 按 BTreeMap index 累积；finish_reason="tool_calls" dispatch
+- [x] 2.3 **兼容性兜底**：ToolCallFunction 自定义 Deserialize，arguments 接受 string OR object（[#20198](https://github.com/ggml-org/llama.cpp/issues/20198)）
+- [x] 2.4 UI 端 AssistantStart/TokenChunk/AssistantToolCalls + 实时 append + request_repaint
+- [ ] 2.5 Markdown 实测卡顿时换 mdstream（egui_commonmark 当前看不出明显卡顿，**留 v2.x**）
+- [x] 2.6 「停止生成」按钮 + Arc&lt;AtomicBool&gt; cancel flag
+- [x] 2.7 cargo test 39/39 + commit 8ec4b9e + push（**ISO build 后置**）
 
-#### Stage 3：tool_result clearing + 工具执行日志 (~0.5 天)
-**理由**：替代当前整 turn truncation，对小模型最稳；audit trail 让用户事后能复盘。
+#### Stage 3：tool_result clearing + 工具执行日志 (~0.5 天) ✅ 已完成
+- [x] 3.1 `agent/truncate.rs` clear_old_tool_results + smart_truncate 组合策略
+- [x] 3.2 `tools/audit_log.rs` JSONL append 到 `X:\NeuroBoot\logs\tool-YYYYMMDD.jsonl`，Win32 GetLocalTime FFI 无 chrono 依赖
+- [x] 3.3 UI 顶栏「日志」按钮 → `ui/log_viewer.rs::open_log_dir` 启动 cmd 在日志目录
+- [x] 3.4 ToolError 分类 enum (7 个 kind) + display_for_model 给模型看分类前缀
+- [x] 3.5 cargo test 47/47 + commit d1ac30f + push
 
-- [ ] 3.1 `agent/truncate.rs` 改写：保 system + 保最近 N（默认 4）个 tool_use 完整 + 老 tool_result 替换成 `[cleared, can re-call]` 占位符
-- [ ] 3.2 新加 `tools/audit_log.rs`：每次 tool execute 写一行 JSONL 到 `X:\NeuroBoot\logs\tool-YYYYMMDD.jsonl`，字段 `{ts, tool, args, safety, user_confirmed, exit_status, duration_ms, result_summary}`
-- [ ] 3.3 UI 顶栏加「查看日志」按钮 → 打开 `X:\logs\` 在 cmd 里 `type` 文件
-- [ ] 3.4 ToolError 分类 enum（PermissionDenied / NotFound / Timeout / ParseError / InvalidArgument / ExternalCommandFailed / Other）
-- [ ] 3.5 cargo test + commit + push + ISO 重 build
+#### Stage 4：危险工具 + 只读模式 + 数据保护 💎 救援核心 (~1 天) ✅ 已完成
+- [x] 4.1 **5 个新 dangerous 工具**（每个走确认弹窗）：
+  - [x] `run_chkdsk` (`chkdsk <drive> /f /r`)
+  - [x] `run_sfc_scannow` (`sfc /scannow`)
+  - [x] `run_dism_restorehealth` (`DISM /Online /Cleanup-Image /RestoreHealth`)
+  - [x] `defender_offline_scan` (`MpCmdRun.exe -Scan -ScanType 2 -BootSectorScan`)
+  - [x] `bootrec_rebuild_bcd` (`bootrec /rebuildbcd`)
+- [x] 4.2 **`delete_path` 改 move-to-trash**：移到 `X:\trash\<timestamp>-<rand>\<name>` 而非真删；模型看不见
+- [x] 4.3 **`--readonly` CLI flag**：dangerous 工具完全不注册（不弹窗即拒）；顶栏 🔒 徽章
+- [ ] 4.4 Ventoy 启动菜单加「NeuroBoot（只读模式）」选项（**未做** —— 需 Ventoy 配置研究；用户当前可手工 `neuroboot.exe --readonly`）
+- [x] 4.5 高危关键词 pre-check：`tools/preflight.rs::check_path_safety()` 通用化 + 7 个 PermissionDenied/NotFound/Timeout/... kinds
+- [x] 4.6 cargo test 52/52 + commit 4a7f9cf + push
 
-#### Stage 4：危险工具 + 只读模式 + 数据保护 💎 救援核心 (~1 天)
-**理由**：NeuroBoot 真正成为「PE 救援盘」的关键；当前只有 1 个危险工具。
-
-- [ ] 4.1 **5 个新 dangerous 工具**（每个走确认弹窗）：
-  - [ ] `run_chkdsk_fix` (`chkdsk <drive> /f /r`)
-  - [ ] `run_sfc_scannow` (`sfc /scannow`)
-  - [ ] `run_dism_restorehealth` (`DISM /Online /Cleanup-Image /RestoreHealth`)
-  - [ ] `defender_offline_scan` (`MpCmdRun.exe -Scan -ScanType 2 -BootSectorScan`) —— **填补 ESET/Norton/Bitdefender 救援盘 EOL 后的真空地带**
-  - [ ] `bootrec_rebuild_bcd` (`bootrec /rebuildbcd`)
-- [ ] 4.2 **`delete_path` 改 Aider 风格**：move to `X:\trash\<timestamp>\<orig-name>`；UI 加「清空 trash」按钮；模型看不见这层包装
-- [ ] 4.3 **加 `--readonly` 启动开关**：所有 dangerous 工具直接拒（不弹窗）；顶栏显示「只读模式」徽章
-- [ ] 4.4 Ventoy 启动菜单加「NeuroBoot（只读模式）」选项
-- [ ] 4.5 高危关键词 pre-check：tool registry 加层，args 里 path 含 `system32` 等直接拒
-- [ ] 4.6 cargo test + commit + push + ISO 重 build
-
-#### Stage 5：本地视觉模型 Qwen3-VL-2B 🎯 差异化 (~1 天 + PE 真测)
+#### Stage 5：本地视觉模型 Qwen3-VL-2B 🎯 差异化 (~1 天 + PE 真测) 🚧 最小可行版完成
 **理由**：把 vision 能力从「依赖云端 VL」拓到「本地 + 中文 + 离线」；NeuroBoot 真正差异化护城河。
 
-- [ ] **5.0 预研**：在主开发机 CPU 上对比 **MiniCPM-V 4.6 (1.3B Q4 529 MB)** vs **Qwen3-VL-2B (Q4 1.11 GB + mmproj 700 MB)**：准备 5 张中文样本图（BIOS / BSOD / 设备管理器 / 错误对话框 / 截图），实测中文 OCR 准确率（人工评分）+ CPU 推理时间 + RAM 峰值。结果决定 5.1 用哪个
-- [ ] 5.1 升级 ISO 内 llama-server 到 **b6907+**（Qwen3-VL PR #16780 + 性能修复）
-- [ ] 5.2 下载放入 ISO 的视觉模型 GGUF + mmproj
-- [ ] 5.3 Rust 端 `llm/endpoint.rs` 加 `local-vl` 端点，base_url `http://127.0.0.1:8081/v1`（避开 8080）
-- [ ] 5.4 实现 **lazy spawn**：vision llama-server 不预启，用户首次上传图片才起 → 5 分钟空闲自动回收
-- [ ] 5.5 settings_dialog.rs 默认 VL 端点改本地（保留云端 fallback）
-- [ ] 5.6 `dumpbin /DEPENDENTS` 验证新 llama-server.exe 不依赖 PE 缺失 DLL
-- [ ] 5.7 PE 真机 benchmark：5 张样本图实测端到端响应时间，记录 `docs/vl-benchmark.md`
-- [ ] 5.8 cargo test + commit + push + ISO 重 build（ISO 增量 ~+1.6 GB）
+**最小可行 (Stage 5 MVP)**：已有 settings dialog 支持任意 endpoint，所以最小集成只需：
+- [x] 5.MVP.a `tools-dev/start-llama-vision-server.ps1` —— 启动 vision llama-server 在 8081
+- [x] 5.MVP.b `docs/BUILD.md` 加 Stage 5 vision setup 节（下载 GGUF + 启 server + 设 endpoint）
+- 用户使用流程：① 跑下载 + 启动脚本 ② NeuroBoot ⚙ 切 endpoint 到 localhost:8081 + model=qwen3-vl-2b ③ + 图片按钮就走本地
 
-#### Stage 6：救援旗舰工具集 🏆 功能补全 (~1 天)
-**理由**：让 NeuroBoot 进入「传统 PE 救援盘」功能完整度；填补 Linux 救援盘的核心工具空白。
+**完整版 (留 v2.x)**：
+- [ ] 5.0 MiniCPM-V 4.6 vs Qwen3-VL-2B 对比预研（5 张中文样本图 benchmark）
+- [ ] 5.1 升级 ISO 内 llama-server 到 b6907+（当前 b9294 已支持 Qwen3-VL，可能不需升级）
+- [ ] 5.2 模型 GGUF 打包进 ISO（增量 ~+1.6 GB，需重 build）
+- [ ] 5.3-5.5 **Lazy spawn**：NeuroBoot 检测「+ 图片」点击自动起 vision server，5min 空闲自动 kill
+- [ ] 5.6 dumpbin 验证新 llama-server.exe
+- [ ] 5.7 PE 真机 5 张样本图 benchmark + 记录 docs/vl-benchmark.md
+- [ ] 5.8 ISO 重 build
 
-- [ ] 6.1 打包 **NTPWEdit**（~500 KB portable）到 `pe-build/payload/tools/` + 新加 `reset_local_admin_password` AI 工具（dangerous，确认弹窗）—— PE 救援盘旗舰功能
-- [ ] 6.2 打包 **TestDisk + PhotoRec for Windows**（~5 MB portable，GPL v2+）+ 新加 `winfr_recover_regular` / `testdisk_scan_partition` AI 工具
-- [ ] 6.3 打包 **smartmontools**（smartctl.exe，~5 MB，GPL）+ 新加 `read_smart` AI 工具
-- [ ] 6.4 更新 NOTICE 文件追加这 3 个工具的 attribution
-- [ ] 6.5 docs/BUILD.md 加这些 portable 工具的下载步骤
-- [ ] 6.6 cargo test + commit + push + ISO 重 build（增量 ~+12 MB）
+#### Stage 6：救援旗舰工具集 🏆 功能补全 (~1 天) ✅ 代码完成（binary 按需下载）
+- [x] 6.1 `reset_local_admin_password` AI 工具（dangerous，确认弹窗）—— NTPWEdit binary 缺失时返回 NotFound 指引 docs
+- [x] 6.2 `testdisk_scan_partition` AI 工具（dangerous）—— TestDisk binary 同理
+- [x] 6.3 `read_smart` AI 工具（safe）—— smartctl.exe 同理
+- [x] 6.4 docs/BUILD.md「v2 Stage 6 救援工具下载」节加 3 个工具下载链接 + robocopy 到 payload
+- [ ] 6.5 NOTICE 追加 attribution（NTPWEdit freeware / TestDisk GPL v2+ / smartmontools GPL）—— **待用户下载实际打包时补**
+- [ ] 6.6 ISO 重 build（增量 ~+12 MB；3 binary 由用户按需下载放 C:\NeuroBoot\tools\）
 
-#### Stage 7：UX 升级 + skill 系统 (~0.5~1 天)
-- [ ] 7.1 顶栏加「**一键全面检查**」按钮（参考 HP AI Companion Perform tab）→ 并行触发 8~10 个只读工具 → 结构化报告
-- [ ] 7.2 **skill 系统**（轻量版 Claude Code skill）：启动时扫 U 盘 `X:\NeuroBoot\skills\*.md` + ISO 内置 6 个 skill（`/diagnose-boot.md` / `/diagnose-network.md` / `/diagnose-bsod.md` / `/recover-files.md` / `/scan-malware.md` / `/reset-password.md`）
-- [ ] 7.3 **取证模式**（WinFE-style）：`--forensic` 启动开关 + Ventoy 菜单选项 → 禁所有写盘工具 + 强制 `--readonly`
-- [ ] 7.4 UI 视觉：dangerous 工具确认弹窗加红框 + 屏幕背景轻微变暗
-- [ ] 7.5 cargo test + commit + push + ISO 重 build
+#### Stage 7：UX 升级 + skill 系统 (~0.5~1 天) ✅ 已完成
+- [x] 7.1 「🔍 全面检查」按钮 → 注入 FULL_CHECK_PROMPT 触发 8 工具并行
+- [x] 7.2 skill 系统：`ui/skills.rs` 扫 X:\NeuroBoot\skills\*.md + C:\NeuroBoot\skills\*.md；docs/usb-templates/skills/ 给 3 个示范（diagnose-bsod / diagnose-network / full-check）
+- [x] 7.3 `--forensic` 启动开关：蕴含 readonly + 🔬 取证模式徽章 + system prompt 增段「磁盘视作证据，不操作」
+- [x] 7.4 dangerous 确认弹窗加红色边框 + 暗红背景 + ⚠ 前缀
+- [x] 7.5 cargo test 56/56 + commit 27aca3e + push
 
-#### Stage 8：MCP 协议 server 模式 🌐 长期布局 (~1~2 天)
-**理由**：MCP 是 Anthropic + Microsoft + OpenAI 共推的开放协议（**不是微软专属**）；NeuroBoot 暴露 12+ 工具成 MCP server，未来 Claude Desktop / Cline / Continue.dev 都能调
-
-- [ ] 8.1 评估 `mcp-rust-sdk` crate 或 `rmcp` 官方 Rust SDK 成熟度
-- [ ] 8.2 NeuroBoot 加 `--mcp-server` 启动模式：暴露 stdio + http transport
-- [ ] 8.3 12+ 工具自动暴露为 MCP tools（复用现有 Tool trait + parameters_schema）
-- [ ] 8.4 文档：如何在 Claude Desktop 配置 NeuroBoot MCP server / 如何用 Claude Code 通过 MCP 调 NeuroBoot 工具
-- [ ] 8.5 cargo test + commit + push
+#### Stage 8：MCP 协议 server 模式 🌐 长期布局 (~1~2 天) ✅ 已完成
+- [x] 8.1 评估 rmcp 官方 Rust SDK —— **拒绝**（拖 tokio +3-10 MB），自实现 ~250 行
+- [x] 8.2 `app/src/mcp.rs` hand-rolled stdio JSON-RPC 2.0 server；`--mcp-server` CLI 切到 server 模式不启 GUI
+- [x] 8.3 12 safe 工具自动暴露为 MCP tools；**dangerous 工具拒暴露**（远端 agent 没 NeuroBoot UI 弹窗确认能力，远程修改太危险）
+- [x] 8.4 docs/BUILD.md 给出 Claude Desktop `claude_desktop_config.json` 配置示例
+- [x] 8.5 cargo test 60/60（+4 MCP JSON-RPC 解析测试）+ 待 commit
 
 ### 已明确**不做**的方向（基于 2026-05 调研）
 

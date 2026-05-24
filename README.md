@@ -59,7 +59,15 @@ destructive operations explicit and reviewable.
 | v1.0    | 2.89 GB | 2026-05-23 | First bootable build, USB real-machine tested |
 | v1.0.1+ | 2.93 GB | 2026-05-24 | 4 P0 fixes from USB real test + 5 user-feedback additions (status bar, system launchers, power controls, image upload, healthcheck startup) |
 | v2 Stage A | – (no rebuild) | 2026-05-24 | Markdown rendering (egui_commonmark) + 8 new safe diagnostic tools (12 total) |
-| **v2 Stage 1** | **done (code), needs ISO rebuild** | 2026-05-24 | System prompt hardening + tool description spec rewrite + Q5_K_M (2.69 GB) quant upgrade ready in `models/` |
+| **v2 Stage 1** | done (code) | 2026-05-24 | System prompt hardening + tool description spec rewrite + Q5_K_M (2.69 GB) quant upgrade |
+| **v2 Stage 2** | done (code) | 2026-05-24 | Streaming SSE + tool_calls accumulation + llama.cpp #20198 compat + cancel button |
+| **v2 Stage 3** | done (code) | 2026-05-24 | tool_result clearing + audit log JSONL + ToolError kind enum |
+| **v2 Stage 4** | done (code) | 2026-05-24 | 5 new dangerous tools (chkdsk/sfc/dism/Defender/bootrec) + delete_path → move-to-trash + --readonly + preflight |
+| **v2 Stage 5** | MVP done | 2026-05-24 | Local vision model integration via existing ⚙ + helper script + docs (full lazy-spawn = v2.x) |
+| **v2 Stage 6** | code done | 2026-05-24 | NTPWEdit/TestDisk/smartctl wrappers (binaries downloaded per docs/BUILD.md) |
+| **v2 Stage 7** | done (code) | 2026-05-24 | One-click full check + skill system + --forensic + dangerous dialog red frame |
+| **v2 Stage 8** | done (code) | 2026-05-24 | Hand-rolled MCP server over stdio (--mcp-server), 12 safe tools exposed, no tokio dep |
+| **v2 ISO rebuild** | pending | — | All v2 changes ready; one admin PowerShell build pass produces NeuroBoot.iso ~3.3 GB |
 
 See **[docs/TODO-v2.md](docs/TODO-v2.md)** for the **8-stage v2 roadmap** (~5.5-9 days of work,
 explicitly excluding Microsoft Phi/QMR/Foundry Local per 2026-05 research), and

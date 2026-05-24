@@ -8,6 +8,8 @@
 pub mod bootrec_rebuild_bcd;
 pub mod defender_offline_scan;
 pub mod delete_path;
+pub mod reset_local_admin_password;
 pub mod run_chkdsk;
 pub mod run_dism_restorehealth;
 pub mod run_sfc;
+pub mod testdisk_scan_partition;
