@@ -1,0 +1,21 @@
+id: multi-slow-deep
+category: multi-step
+description: Deep slow-PC investigation requires processes + services + recent installs + disk space.
+
+input:
+  user: "电脑很慢，请同时查最近装的补丁、跑得最猛的进程、还在跑的服务，给我一个综合判断。"
+
+expected:
+  must_call_tools:
+    - list_processes_top
+    - list_services
+    - read_recent_installs
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(慢|进程|服务|补丁)"
+  must_not_match:
+    - "我已经优化"
+  max_response_seconds: 150
+  max_tokens: 4500

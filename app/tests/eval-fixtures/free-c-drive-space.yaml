@@ -1,0 +1,18 @@
+id: free-c-drive-space
+category: free-form
+description: C drive remaining space -- volumes / partitions tool expected.
+
+input:
+  user: "C 盘还剩多少空间？"
+
+expected:
+  must_call_tools: []   # any of list_volumes / list_partitions / list_disks fine
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(C 盘|C:|空间|剩余|GB|MB)"
+  must_not_match:
+    - "我已经清理"
+  max_response_seconds: 45
+  max_tokens: 1500

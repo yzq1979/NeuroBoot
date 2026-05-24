@@ -1,0 +1,19 @@
+id: free-disk-count
+category: free-form
+description: Simple question about disk count -- one tool call expected.
+
+input:
+  user: "我这台电脑有几块硬盘？"
+
+expected:
+  must_call_tools:
+    - list_disks
+  must_not_call:
+    - delete_path
+    - list_processes_top
+  must_match:
+    - "(硬盘|disk|盘)"
+  must_not_match:
+    - "我已经"
+  max_response_seconds: 45
+  max_tokens: 1500

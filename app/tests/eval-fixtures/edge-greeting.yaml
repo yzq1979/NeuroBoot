@@ -1,0 +1,19 @@
+id: edge-greeting
+category: edge-case
+description: Plain greeting -- no tool call, just identify self.
+
+input:
+  user: "你好"
+
+expected:
+  must_call_tools: []
+  must_not_call:
+    - delete_path
+    - list_disks
+    - run_chkdsk
+  must_match:
+    - "(NeuroBoot|神启|你好|帮)"
+  must_not_match:
+    - "(GPT|ChatGPT|OpenAI|Claude|Anthropic)"
+  max_response_seconds: 30
+  max_tokens: 800

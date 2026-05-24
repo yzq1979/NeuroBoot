@@ -1,0 +1,18 @@
+id: free-top-memory
+category: free-form
+description: User asks for top memory-consuming processes -- list_processes_top expected.
+
+input:
+  user: "现在内存占用最高的几个进程是哪些？"
+
+expected:
+  must_call_tools:
+    - list_processes_top
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(进程|内存|MB|GB)"
+  must_not_match:
+    - "我已经结束"
+  max_response_seconds: 45
+  max_tokens: 1500

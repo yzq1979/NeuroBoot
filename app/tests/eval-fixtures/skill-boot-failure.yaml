@@ -1,0 +1,21 @@
+id: skill-boot-failure
+category: skill
+description: User's Windows won't boot. Should run /fix-boot-failure skill, check WinRE + BCD status before suggesting any repair.
+
+input:
+  user: "我的 Windows 启动不了，开机就出现各种错误，进不了系统。请帮我看一下。"
+
+expected:
+  must_call_tools:
+    - load_skill
+    - list_winre_status
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(启动|boot|引导)"
+    - "(WinRE|BCD|恢复)"
+  must_not_match:
+    - "我已经修复"
+    - "已重建"
+  max_response_seconds: 120
+  max_tokens: 3500

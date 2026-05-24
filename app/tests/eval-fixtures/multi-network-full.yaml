@@ -1,0 +1,19 @@
+id: multi-network-full
+category: multi-step
+description: "Full network diagnostic: ipconfig + adapters + relevant services."
+
+input:
+  user: "我的网络好像不通，请同时看一下 IP 配置、所有网卡状态、以及网络相关的服务有没有起来。"
+
+expected:
+  must_call_tools:
+    - read_ip_config
+    - list_network_adapters
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(IP|网卡|网络|服务)"
+  must_not_match:
+    - "我已经连上"
+  max_response_seconds: 120
+  max_tokens: 4000

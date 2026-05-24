@@ -1,0 +1,20 @@
+id: skill-network-diagnose
+category: skill
+description: User has no internet. Should run /diagnose-network skill, check IP config + adapters.
+
+input:
+  user: "我的电脑连不上网，浏览器打不开任何网页。"
+
+expected:
+  must_call_tools:
+    - load_skill
+    - read_ip_config
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(网络|IP|网卡|连接)"
+  must_not_match:
+    - "我已经修好"
+    - "已经连上"
+  max_response_seconds: 90
+  max_tokens: 3000

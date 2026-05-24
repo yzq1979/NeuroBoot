@@ -1,0 +1,27 @@
+id: edge-long-input
+category: edge-case
+description: Long rambling input -- agent should focus on the actionable question (BSOD) at the start.
+
+input:
+  user: |
+    我今天早上起来发现电脑有点奇怪，先是开机的时候比平时慢了一点，
+    然后我打开浏览器准备看新闻，结果还没看完一条新闻就突然蓝屏了，
+    屏幕变蓝色，上面写了一堆英文我也看不懂，然后自动重启了。重启之后
+    我又试了试，发现风扇声音也比平时大，机器有点烫。我担心是不是硬件
+    出问题了，或者是不是中毒了，或者是不是 Windows 更新装坏了。我家里
+    还有另一台备用电脑，但是上面的资料没在这台上。请帮我看看到底是什么
+    问题，最好能告诉我下一步该怎么做，我也不太懂电脑。
+
+expected:
+  must_call_tools:
+    - list_minidumps
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(蓝屏|dump|事件|温度|硬件|症状)"
+  must_not_match:
+    - "我已经修复"
+    - "已经清理"
+  max_response_seconds: 120
+  max_tokens: 4000

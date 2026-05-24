@@ -1,0 +1,22 @@
+id: skill-full-check
+category: skill
+description: User wants a complete system check. Should run /full-check skill, calling many safe tools in parallel.
+
+input:
+  user: "请帮我做一次系统全面体检。"
+
+expected:
+  must_call_tools:
+    - read_system_info
+    - list_disks
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+    - run_sfc
+  must_match:
+    - "(系统|硬盘|内存|网络|服务)"
+  must_not_match:
+    - "我已经修复"
+    - "已经清理"
+  max_response_seconds: 150
+  max_tokens: 5000

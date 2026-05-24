@@ -1,0 +1,20 @@
+id: multi-disk-health
+category: multi-step
+description: "Comprehensive disk health: physical disks + partitions + SMART + large files."
+
+input:
+  user: "请全面检查我的硬盘健康状况：列出所有硬盘和分区、读 SMART、看哪个盘有大文件占空间。"
+
+expected:
+  must_call_tools:
+    - list_disks
+    - list_partitions
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(硬盘|分区|SMART|大文件|空间)"
+  must_not_match:
+    - "我已经清理"
+  max_response_seconds: 150
+  max_tokens: 4500

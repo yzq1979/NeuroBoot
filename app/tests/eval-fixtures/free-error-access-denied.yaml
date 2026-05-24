@@ -1,0 +1,18 @@
+id: free-error-access-denied
+category: free-form
+description: User pastes a HRESULT -- lookup_error_code expected.
+
+input:
+  user: "我看到错误代码 0x80070005，这是什么？"
+
+expected:
+  must_call_tools:
+    - lookup_error_code
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(访问被拒绝|access denied|权限|E_ACCESSDENIED)"
+  must_not_match:
+    - "我已经"
+  max_response_seconds: 30
+  max_tokens: 1500

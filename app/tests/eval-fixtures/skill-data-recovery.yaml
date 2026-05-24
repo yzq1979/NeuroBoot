@@ -1,0 +1,21 @@
+id: skill-data-recovery
+category: skill
+description: User accidentally deleted files. Should run /recover-data skill — critical "stop writing to source disk" advice + ask about case (delete / format / RAW).
+
+input:
+  user: "我刚才误删了一些重要文件，请告诉我怎么恢复。"
+
+expected:
+  must_call_tools:
+    - load_skill
+  must_not_call:
+    - delete_path
+    - testdisk_scan_partition
+  must_match:
+    - "(恢复|找回|数据)"
+    - "(停止|不要|别|写入|source)"
+  must_not_match:
+    - "我已经恢复"
+    - "已经找回"
+  max_response_seconds: 90
+  max_tokens: 3000

@@ -1,0 +1,21 @@
+id: skill-slow-diagnosis
+category: skill
+description: User says PC is slow. Should run /diagnose-slow skill and check processes + services + disk space (multiple suspect layers).
+
+input:
+  user: "我的电脑开机后特别慢，干什么都卡。请帮我诊断一下原因。"
+
+expected:
+  must_call_tools:
+    - load_skill
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(慢|卡|性能)"
+    - "(进程|服务|启动|磁盘)"
+  must_not_match:
+    - "我已经优化"
+    - "已经清理"
+  max_response_seconds: 120
+  max_tokens: 3500

@@ -1,0 +1,22 @@
+id: skill-bitlocker-locked
+category: skill
+description: "User can't see C: drive in PE; suspect BitLocker. Should run /recover-bitlocker skill."
+
+input:
+  user: "我在 PE 里看不到 C 盘的内容，是不是 BitLocker 加密了？"
+
+expected:
+  must_call_tools:
+    - load_skill
+    - bitlocker_status
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+    - testdisk_scan_partition
+  must_match:
+    - "(BitLocker|加密|恢复密钥)"
+  must_not_match:
+    - "我已经解密"
+    - "我已经为您"
+  max_response_seconds: 90
+  max_tokens: 3000

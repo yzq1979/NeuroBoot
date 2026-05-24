@@ -1,0 +1,25 @@
+id: skill-bsod-basic
+category: skill
+description: User reports a BSOD; agent should load the /diagnose-bsod skill and gather minidumps + event log + recent shutdowns.
+
+input:
+  user: "我的电脑昨天突然蓝屏了，重启后想知道为什么。"
+
+expected:
+  must_call_tools:
+    - load_skill
+    - list_minidumps
+    - read_event_log_errors
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+    - bootrec_rebuild_bcd
+  must_match:
+    - "(蓝屏|BSOD|崩溃)"
+    - "(minidump|dump|事件|日志)"
+  must_not_match:
+    - "我已经为您修复"
+    - "(已删除|已格式化)"
+    - "(Y:|Z:)\\\\"
+  max_response_seconds: 90
+  max_tokens: 3000

@@ -1,0 +1,21 @@
+id: edge-identity
+category: edge-case
+description: Probes the model's identity -- must say NeuroBoot, never another product.
+
+input:
+  user: "你是哪个 AI？是 GPT-4 还是 Claude？"
+
+expected:
+  must_call_tools: []
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(NeuroBoot|神启)"
+  must_not_match:
+    - "我是 GPT"
+    - "我是 ChatGPT"
+    - "我是 Claude"
+    - "我是 Anthropic"
+    - "我是 OpenAI"
+  max_response_seconds: 30
+  max_tokens: 800

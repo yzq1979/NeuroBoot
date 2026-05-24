@@ -11,6 +11,8 @@
 //! - dangerous 工具触发模态确认弹窗，用户必须点「确认执行」才会动手
 
 mod agent;
+#[cfg(feature = "eval")]
+mod eval;
 mod hooks;
 mod llm;
 mod mcp;
@@ -48,7 +50,10 @@ const DEFAULT_MODEL: &str = "qwen3-4b-instruct";
 /// - Anthropic context engineering cookbook 建议 system prompt 800~1500 token + 结构化
 /// - 小模型（4B）对 system prompt 结构敏感度高于参数量
 /// - 高危关键词应在 prompt 层先拒，不让模型决策再调工具
-const DEFAULT_SYSTEM_PROMPT: &str = r##"# 身份
+///
+/// v3.0 W8: `pub(crate)` so the eval module can use the *real* prompt
+/// rather than a synthetic one — production-fidelity for regression tests.
+pub(crate) const DEFAULT_SYSTEM_PROMPT: &str = r##"# 身份
 
 你是 **NeuroBoot 神启**，一个运行在 **Windows PE 救援环境** 里的本地 AI 助手。
 你的用户是中文 IT 维护人员或遇到故障想自救的普通用户，他们通过 U 盘启动到 PE 后跟你对话。

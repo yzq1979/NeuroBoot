@@ -1,0 +1,21 @@
+id: multi-bsod-deep
+category: multi-step
+description: Full BSOD investigation requires minidumps + analyze + event log + recent shutdowns.
+
+input:
+  user: "我电脑频繁蓝屏，请把所有相关证据都收集来：dump 文件、最近系统错误、异常重启历史，最后给我一份原因分析。"
+
+expected:
+  must_call_tools:
+    - list_minidumps
+    - read_event_log_errors
+    - list_recent_shutdowns
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(蓝屏|dump|minidump|事件|重启)"
+  must_not_match:
+    - "我已经修复"
+  max_response_seconds: 180
+  max_tokens: 5000

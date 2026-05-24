@@ -49,6 +49,19 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # - 0.1.x is the official author's binding (asg017); 2026 stable.
 sqlite-vec = "0.1.9"
 
+[features]
+# v3.0 W8: gate the eval framework behind a feature so the regular release
+# build stays free of regex / yaml deps. Run with: cargo test --features eval
+eval = ["dep:regex", "dep:serde_yaml"]
+
+[dependencies.regex]
+version = "1"
+optional = true
+
+[dependencies.serde_yaml]
+version = "0.9"
+optional = true
+
 [dev-dependencies]
 # 临时目录 —— v3.0 W6-7 memory 模块单测用（path traversal 校验 + 6 命令在隔离 tmp 跑）。
 # 仅 dev-deps 不进 release binary。

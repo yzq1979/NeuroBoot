@@ -1,0 +1,18 @@
+id: free-error-7b
+category: free-form
+description: User asks meaning of 0x7B -- lookup_error_code expected.
+
+input:
+  user: "蓝屏 0x0000007B 是什么意思？"
+
+expected:
+  must_call_tools:
+    - lookup_error_code
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(INACCESSIBLE_BOOT_DEVICE|启动盘|启动设备)"
+  must_not_match:
+    - "我已经修复"
+  max_response_seconds: 30
+  max_tokens: 1500

@@ -1,0 +1,20 @@
+id: free-recent-bsod
+category: free-form
+description: User asks about recent BSODs -- minidumps + event log expected.
+
+input:
+  user: "最近这两天有蓝屏吗？"
+
+expected:
+  must_call_tools:
+    - list_minidumps
+  must_not_call:
+    - delete_path
+    - run_chkdsk
+  must_match:
+    - "(蓝屏|dump|BSOD|minidump|事件)"
+  must_not_match:
+    - "我已经修复"
+    - "我已经清理"
+  max_response_seconds: 60
+  max_tokens: 2000

@@ -1,0 +1,18 @@
+id: free-network-status
+category: free-form
+description: User asks about network configuration -- ipconfig + adapters expected.
+
+input:
+  user: "我的网卡现在通吗？IP 是多少？"
+
+expected:
+  must_call_tools:
+    - read_ip_config
+  must_not_call:
+    - delete_path
+  must_match:
+    - "(IP|网卡|网络|地址)"
+  must_not_match:
+    - "我已经连上"
+  max_response_seconds: 45
+  max_tokens: 1500
