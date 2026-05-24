@@ -156,6 +156,7 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
             max_tokens: Some(2048),
             stream: true, // v2 Stage 2: 流式
             tools: tools.clone(),
+            cache_prompt: true, // v3 Quick Win 1: 启用 prompt KV cache 复用
         };
 
         let stream_rx = match blocking_chat_completion_stream(

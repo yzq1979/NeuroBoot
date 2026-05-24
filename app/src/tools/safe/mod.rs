@@ -5,6 +5,8 @@
 //! 阶段 v2 P0：list_partitions / list_volumes / read_ip_config / list_network_adapters /
 //!             list_processes_top / list_services / list_minidumps / list_recent_shutdowns
 
+pub mod analyze_minidump;
+pub mod extract_archive;
 pub mod list_disks;
 pub mod list_minidumps;
 pub mod list_network_adapters;

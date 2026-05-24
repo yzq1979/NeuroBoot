@@ -80,11 +80,18 @@ try {
     # v2 Stage 1.3 (2026-05-24): -m bumped to Q5_K_M GGUF (2.69 GB)
     # Q4_K_M is Q4-tier lower bound for 4B models; Q5_K_M ships visibly
     # better tool-calling reliability per llama.cpp/unsloth guidance.
+    # v3 Quick Win 1 (2026-05-24): + --slot-save-path + --cache-reuse for
+    # prompt KV cache reuse. Combined with cache_prompt=true in request
+    # body, this gives ~93% TTFT reduction on follow-up turns. The slots
+    # dir lives on X:\ ramdisk so it does not persist across PE reboots;
+    # that's fine - within a single session is where the win is.
+    # See https://github.com/ggml-org/llama.cpp/discussions/13606
     $llamaCmd = @'
 @echo off
 REM Launches llama-server with the bundled Qwen3-4B GGUF on PE.
 REM X: is the PE ramdisk drive letter.
 cd /d X:\NeuroBoot\llama-cpp
+if not exist X:\NeuroBoot\slots mkdir X:\NeuroBoot\slots
 llama-server.exe ^
   -m X:\NeuroBoot\models\Qwen3-4B-Instruct-2507-Q5_K_M.gguf ^
   -a qwen3-4b-instruct ^
@@ -93,7 +100,9 @@ llama-server.exe ^
   -c 16384 ^
   -ngl 0 ^
   -t 4 ^
-  --no-mmap
+  --no-mmap ^
+  --slot-save-path X:\NeuroBoot\slots ^
+  --cache-reuse 256
 '@
     [System.IO.File]::WriteAllText($startLlama, $llamaCmd, [System.Text.ASCIIEncoding]::new())
     "  Written: $startLlama"

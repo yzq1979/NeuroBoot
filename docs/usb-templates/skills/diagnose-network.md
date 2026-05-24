@@ -1,5 +1,7 @@
-# /diagnose-network
-> 用户说「连不上网」「网慢」「DNS 错」
+---
+name: /diagnose-network
+description: 用户说连不上网 / 网慢 / DNS 错时的诊断剧本
+---
 
 按以下顺序诊断网络问题：
 

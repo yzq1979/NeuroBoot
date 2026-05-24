@@ -213,6 +213,8 @@ fn run_as_mcp_server() {
     registry.register(Box::new(tools::safe::list_minidumps::ListMinidumps));
     registry.register(Box::new(tools::safe::list_recent_shutdowns::ListRecentShutdowns));
     registry.register(Box::new(tools::safe::read_smart::ReadSmart));
+    registry.register(Box::new(tools::safe::extract_archive::ExtractArchive));
+    registry.register(Box::new(tools::safe::analyze_minidump::AnalyzeMinidump));
 
     mcp::run_mcp_server(Arc::new(registry));
     std::process::exit(0);
@@ -298,6 +300,9 @@ impl Default for NeuroBootApp {
         registry.register(Box::new(tools::safe::list_recent_shutdowns::ListRecentShutdowns));
         // v2 Stage 6 新增 safe 工具（外部 binary 缺失时返回 NotFound）
         registry.register(Box::new(tools::safe::read_smart::ReadSmart));
+        // v3 Quick Win 2 + 3 新增 safe 工具
+        registry.register(Box::new(tools::safe::extract_archive::ExtractArchive));
+        registry.register(Box::new(tools::safe::analyze_minidump::AnalyzeMinidump));
         // dangerous 工具：只读模式下完全不注册
         if !readonly_mode {
             // v1 dangerous

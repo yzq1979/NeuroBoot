@@ -151,6 +151,7 @@ impl OpenAiMessage {
 /// chat completion 请求体（OpenAI 兼容）。
 ///
 /// 阶段 3 加 `tools` 字段（function calling 工具清单，None 表示不提供工具）。
+/// **v3 Quick Win 1** 加 `cache_prompt` —— llama.cpp 扩展字段，启用 KV cache 跨请求复用。
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatCompletionRequest {
     pub model: String,
@@ -164,6 +165,12 @@ pub struct ChatCompletionRequest {
     /// 工具清单（OpenAI function calling）—— 阶段 3.2 起 agent loop 注入
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolDefinition>>,
+    /// **v3 Quick Win 1** —— llama.cpp 私有扩展字段，启用 prompt KV cache 跨请求复用。
+    /// 实测 TTFT 可降 93%（4.2s → 0.3s）。OpenAI 兼容端点会忽略此字段，无害。
+    /// llama-server 启动时配 `--slot-save-path` 持久化；参见
+    /// [llama.cpp #13606](https://github.com/ggml-org/llama.cpp/discussions/13606)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cache_prompt: bool,
 }
 
 /// chat completion 响应体（最小化，只解析我们用得到的字段）。
