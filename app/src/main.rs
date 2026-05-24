@@ -239,6 +239,12 @@ fn run_as_mcp_server() {
     registry.register(Box::new(tools::safe::load_skill::LoadSkill));
     // v3.0 W3-4: Plan Mode 入口（MCP 模式下 execute() 返 placeholder，不阻塞）
     registry.register(Box::new(tools::safe::propose_plan::ProposePlan));
+    // v3.0 W7: 4 个 PS 包装的新 safe 工具
+    registry.register(Box::new(tools::safe::list_winre_status::ListWinreStatus));
+    registry.register(Box::new(tools::safe::bitlocker_status::BitlockerStatus));
+    registry.register(Box::new(tools::safe::find_large_files::FindLargeFiles));
+    registry.register(Box::new(tools::safe::read_recent_installs::ReadRecentInstalls));
+    registry.register(Box::new(tools::safe::lookup_error_code::LookupErrorCode));
 
     mcp::run_mcp_server(Arc::new(registry));
     std::process::exit(0);
@@ -335,6 +341,13 @@ impl Default for NeuroBootApp {
         registry.register(Box::new(tools::safe::load_skill::LoadSkill));
         // v3.0 W3-4: Plan Mode 入口工具（Cline 风格）
         registry.register(Box::new(tools::safe::propose_plan::ProposePlan));
+        // v3.0 W7: 4 个 PS 包装的新 safe 工具（配套 W2-3 skills）
+        registry.register(Box::new(tools::safe::list_winre_status::ListWinreStatus));
+        registry.register(Box::new(tools::safe::bitlocker_status::BitlockerStatus));
+        registry.register(Box::new(tools::safe::find_large_files::FindLargeFiles));
+        registry.register(Box::new(tools::safe::read_recent_installs::ReadRecentInstalls));
+        // v3.0 W7: error code 查询（MVP 版用 hardcoded 表；W5-6 升级 RAG）
+        registry.register(Box::new(tools::safe::lookup_error_code::LookupErrorCode));
         // dangerous 工具：只读模式下完全不注册
         if !readonly_mode {
             // v1 dangerous

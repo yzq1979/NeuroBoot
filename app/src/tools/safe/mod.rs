@@ -6,7 +6,9 @@
 //!             list_processes_top / list_services / list_minidumps / list_recent_shutdowns
 
 pub mod analyze_minidump;
+pub mod bitlocker_status;
 pub mod extract_archive;
+pub mod find_large_files;
 pub mod list_disks;
 pub mod list_minidumps;
 pub mod list_network_adapters;
@@ -15,9 +17,12 @@ pub mod list_processes_top;
 pub mod list_recent_shutdowns;
 pub mod list_services;
 pub mod list_volumes;
+pub mod list_winre_status;
 pub mod load_skill;
+pub mod lookup_error_code;
 pub mod propose_plan;
 pub mod read_event_log_errors;
 pub mod read_ip_config;
+pub mod read_recent_installs;
 pub mod read_smart;
 pub mod read_system_info;
