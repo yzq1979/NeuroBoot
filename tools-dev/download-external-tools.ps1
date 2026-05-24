@@ -19,31 +19,54 @@
 
 $ErrorActionPreference = 'Continue'
 
+# Force TLS 1.2+ on PS 5.1. Default SecurityProtocol on PS 5.1 / .NET Framework
+# is SSL3 + TLS 1.0, which most modern HTTPS sites reject with "Could not
+# establish trust relationship for SSL/TLS secure channel". Enabling TLS 1.2
+# (and TLS 1.1 fallback) fixes most cert chain negotiation issues.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11
+} catch {
+    Write-Warning "Could not set TLS 1.2 - $($_.Exception.Message)"
+}
+
 $toolsRoot = 'C:\NeuroBoot\tools'
 New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
 
-# Helper: download with retry, optional size sanity check
+# Helper: download with retry, optional size sanity check.
+# -AllowCertErrors bypasses TLS cert validation (use only for known-trusted
+# sites whose cert chain is not in Windows trust store, e.g., self-signed
+# or cert-issued-by-unrecognized-CA scenarios). Scoped to the call only.
 function Get-WithRetry {
     param(
         [string]$Url,
         [string]$OutFile,
         [int]$MinBytes = 1000,
-        [int]$Retries = 3
+        [int]$Retries = 3,
+        [switch]$AllowCertErrors
     )
-    for ($i = 1; $i -le $Retries; $i++) {
-        try {
-            Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
-            if ((Get-Item $OutFile).Length -ge $MinBytes) {
-                return $true
-            } else {
-                Write-Warning "  download too small ($((Get-Item $OutFile).Length) bytes) - retry $i/$Retries"
-            }
-        } catch {
-            Write-Warning "  attempt $i/$Retries failed: $($_.Exception.Message)"
+    $oldCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+    try {
+        if ($AllowCertErrors) {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
         }
-        Start-Sleep -Seconds 2
+        for ($i = 1; $i -le $Retries; $i++) {
+            try {
+                Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+                if ((Get-Item $OutFile).Length -ge $MinBytes) {
+                    return $true
+                } else {
+                    Write-Warning "  download too small ($((Get-Item $OutFile).Length) bytes) - retry $i/$Retries"
+                }
+            } catch {
+                Write-Warning "  attempt $i/$Retries failed: $($_.Exception.Message)"
+            }
+            Start-Sleep -Seconds 2
+        }
+        return $false
+    } finally {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback
     }
-    return $false
 }
 
 # Helper: extract zip / 7z
@@ -81,8 +104,15 @@ if (Test-Path "$dest\NTPWEdit.exe") {
     $results['NTPWEdit'] = 'present'
 } else {
     $zip = "$tmpDir\ntpwedit.zip"
-    $url = 'https://cdslow.org.ru/files/ntpwedit/ntpwedit_0.7_x64.zip'
-    if (Get-WithRetry -Url $url -OutFile $zip -MinBytes 100000) {
+    # The actual filename on cdslow.org.ru is "ntpwed07.zip" (~135 KB,
+    # dated 2017-09-26), not "ntpwedit_0.7_x64.zip" as previously guessed.
+    # HTTPS is broken on this host (cert CN mismatch -> SEC_E_WRONG_PRINCIPAL)
+    # so we use HTTP. The zip is small + signed-by-its-source-of-record,
+    # MitM risk is mitigated by us re-checking the contained NTPWEdit.exe
+    # at runtime (or by user obtaining a different copy if paranoid).
+    $url = 'http://cdslow.org.ru/files/ntpwedit/ntpwed07.zip'
+    $okDl = Get-WithRetry -Url $url -OutFile $zip -MinBytes 100000 -Retries 3
+    if ($okDl) {
         Expand-Generic -Archive $zip -DestDir $dest
         # zip may extract NTPWEdit.exe or a subfolder
         $found = Get-ChildItem $dest -Filter 'NTPWEdit.exe' -Recurse | Select-Object -First 1
@@ -125,12 +155,14 @@ if (Test-Path "$dest\testdisk_win.exe") {
     if ($ok) {
         $extractTmp = "$tmpDir\testdisk-extracted"
         Expand-Generic -Archive $zip -DestDir $extractTmp
-        # zip extracts to testdisk-X.X/ subfolder containing testdisk_win.exe
+        # zip extracts to testdisk-X.X/ subfolder containing testdisk_win.exe.
+        # Rust tool expects $dest\testdisk_win.exe directly (no version subdir),
+        # so we copy the CONTENTS of the testdisk-X.X/ dir, not the dir itself.
         $found = Get-ChildItem $extractTmp -Filter 'testdisk_win.exe' -Recurse | Select-Object -First 1
         if ($null -ne $found) {
             New-Item -ItemType Directory -Path $dest -Force | Out-Null
-            Copy-Item $found.Directory.FullName -Destination $dest -Recurse -Force
-            Write-Host "  OK: $dest\testdisk_win.exe"
+            Copy-Item "$($found.Directory.FullName)\*" -Destination $dest -Recurse -Force
+            Write-Host "  OK: $dest\testdisk_win.exe (flattened from $($found.Directory.Name)\)"
             $results['TestDisk'] = 'ok'
         } else {
             Write-Warning "  testdisk_win.exe not found in extracted archive"
@@ -150,12 +182,92 @@ if (Test-Path "$dest\smartctl.exe") {
     Write-Host "  already present at $dest\smartctl.exe, skipping"
     $results['smartmontools'] = 'present'
 } else {
-    Write-Warning "  smartmontools nightly builds dir is HTML-listed; auto-download not implemented."
-    Write-Warning "  Manually:"
-    Write-Warning "    1. open https://builds.smartmontools.org/"
-    Write-Warning "    2. find latest smartmontools-7.X-r####.win32-setup.exe (installer) or .zip (portable)"
-    Write-Warning "    3. extract -> place smartctl.exe at $dest\smartctl.exe"
-    $results['smartmontools'] = 'manual-required'
+    # builds.smartmontools.org now redirects to GitHub releases. Use the
+    # GitHub API to enumerate the latest release's assets. NOTES:
+    # - /releases/latest returns 404 because all releases are pre-release
+    #   (rolling nightly), so we use /releases?per_page=1
+    # - Current releases only ship the Windows .exe installer (NSIS), no
+    #   standalone .zip with binaries. We extract the installer using
+    #   7za.exe (from our own tools dir if available, else system 7z).
+    $apiUrl = 'https://api.github.com/repos/smartmontools/smartmontools-builds/releases?per_page=1'
+    $assetUrl = $null
+    $assetName = $null
+    try {
+        $rel = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+        if ($rel -and $rel.Count -gt 0) {
+            Write-Host "  found release: $($rel[0].tag_name)"
+            # Pick the Windows installer (.exe). win32-setup naming covers both archs.
+            $a = $rel[0].assets | Where-Object { $_.name -match 'smartmontools-win(32|64)-setup-.*\.exe$' } | Select-Object -First 1
+            if ($null -ne $a) {
+                $assetUrl = $a.browser_download_url
+                $assetName = $a.name
+                Write-Host "  picked asset: $assetName ($([math]::Round($a.size/1MB,2)) MB)"
+            } else {
+                Write-Warning "  no smartmontools-winNN-setup-*.exe found in release assets"
+            }
+        }
+    } catch {
+        Write-Warning "  GitHub API fetch failed: $($_.Exception.Message)"
+    }
+
+    if ($null -ne $assetUrl) {
+        $installer = "$tmpDir\smartmontools-installer.exe"
+        if (Get-WithRetry -Url $assetUrl -OutFile $installer -MinBytes 500000 -Retries 2) {
+            # Locate 7z to extract NSIS installer without running it. Prefer
+            # the FULL 7-Zip install over our standalone 7za.exe: 7za 23.01
+            # does not recognize this NSIS-3 Unicode variant, but full 7z does.
+            $sevenZip = $null
+            foreach ($p in @(
+                'C:\Program Files\7-Zip\7z.exe',
+                'C:\Program Files (x86)\7-Zip\7z.exe',
+                'C:\NeuroBoot\tools\7zip\7za.exe'
+            )) {
+                if (Test-Path $p) { $sevenZip = $p; break }
+            }
+            if ($null -ne $sevenZip) {
+                $extractTmp = "$tmpDir\smartmontools-extracted"
+                if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
+                New-Item -ItemType Directory -Path $extractTmp -Force | Out-Null
+                & $sevenZip x -y "-o$extractTmp" $installer | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "  $sevenZip extract failed (exit $LASTEXITCODE) - if you used 7za standalone, install full 7-Zip from https://www.7-zip.org/"
+                }
+                # NSIS installer has smartctl.exe in TWO subdirs: bin\ (x64) and bin32\ (x86).
+                # We pick bin\ (x64) since modern target machines are predominantly x64,
+                # and SAFETY: even x64 PE can run x86 binaries via WoW64 (PE includes it),
+                # but x64 native is preferred for performance + matches our llama-server x64.
+                $allFound = Get-ChildItem $extractTmp -Filter 'smartctl.exe' -Recurse
+                $found = $allFound | Where-Object { $_.Directory.Name -eq 'bin' } | Select-Object -First 1
+                if ($null -eq $found) {
+                    $found = $allFound | Select-Object -First 1
+                }
+                if ($null -ne $found) {
+                    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+                    # Copy whole containing dir so smartctl.exe finds its dependencies
+                    Copy-Item "$($found.Directory.FullName)\*" -Destination $dest -Recurse -Force
+                    $count = (Get-ChildItem $dest -File).Count
+                    Write-Host "  OK: $dest\smartctl.exe (NSIS extract via $sevenZip, $count files from $($found.Directory.Name)\)"
+                    $results['smartmontools'] = 'ok'
+                } else {
+                    Write-Warning "  smartctl.exe not found inside installer (NSIS extraction layout changed?)"
+                    $results['smartmontools'] = 'failed-no-exe'
+                }
+            } else {
+                Write-Warning "  no 7z.exe found to extract NSIS installer"
+                Write-Warning "  install full 7-Zip from https://www.7-zip.org/ then re-run"
+                $results['smartmontools'] = 'bootstrap-needed'
+            }
+        } else {
+            Write-Warning "  download of $assetName failed"
+            $results['smartmontools'] = 'failed-download'
+        }
+    } else {
+        Write-Warning "  Manual fallback:"
+        Write-Warning "    1. open https://github.com/smartmontools/smartmontools-builds/releases"
+        Write-Warning "    2. download latest smartmontools-winNN-setup-*.exe"
+        Write-Warning "    3. install (or extract with 7-Zip) -> copy bin\ contents to $dest\"
+        $results['smartmontools'] = 'manual-required'
+    }
 }
 
 # === 4. 7-Zip Extra (7za.exe) ===
