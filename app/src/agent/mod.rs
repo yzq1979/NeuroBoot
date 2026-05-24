@@ -31,6 +31,7 @@ use crate::llm::client::{blocking_chat_completion_stream, StreamEvent};
 use crate::llm::openai::{
     ChatCompletionRequest, OpenAiMessage, ToolCall, ToolCallFunction, ToolDefinition,
 };
+use crate::tools::audit_log;
 use crate::tools::{SafetyClass, ToolRegistry};
 use crate::ui::chat::{ChatMessage, Role, ToolCallSummary};
 
@@ -144,8 +145,8 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
             return;
         }
 
-        // 阶段 4.1：发送前 truncate 历史，防超 server ctx
-        truncate::truncate_history(&mut api_messages, MAX_INPUT_TOKENS);
+        // 阶段 v2 Stage 3.1：先 clear 老 tool results 再按 turn truncate（小模型更友好）
+        truncate::smart_truncate(&mut api_messages, MAX_INPUT_TOKENS);
 
         // ----- 一次 LLM 流式调用 -----
         let req = ChatCompletionRequest {
@@ -299,15 +300,36 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
             let raw_args = tc.function.arguments.as_str();
             let args: Value = serde_json::from_str(raw_args).unwrap_or(Value::Null);
 
+            // 时间窗口仅计算工具实际执行时间，不含用户在确认弹窗的等待时间
+            let mut user_confirmed: Option<bool> = None;
+            let mut safety_str = "safe";
+            let exec_start = std::time::Instant::now();
+            let exec_duration;
+            let success;
             let result_text = match job.tool_registry.get(tool_name) {
-                None => format!("（错误）未找到工具 `{tool_name}`"),
+                None => {
+                    exec_duration = exec_start.elapsed();
+                    success = false;
+                    format!("（错误）未找到工具 `{tool_name}`")
+                }
                 Some(tool) => match tool.safety() {
-                    SafetyClass::Safe => match tool.execute(&args) {
-                        Ok(s) => s,
-                        Err(e) => format!("（工具错误）{}", e.message),
-                    },
+                    SafetyClass::Safe => {
+                        let exec_inner_start = std::time::Instant::now();
+                        let r = tool.execute(&args);
+                        exec_duration = exec_inner_start.elapsed();
+                        match r {
+                            Ok(s) => {
+                                success = true;
+                                s
+                            }
+                            Err(e) => {
+                                success = false;
+                                format!("（工具错误）{}", e.display_for_model())
+                            }
+                        }
+                    }
                     SafetyClass::Dangerous => {
-                        // 阶段 4.3：dangerous 工具 → 发确认请求 → 阻塞等用户
+                        safety_str = "dangerous";
                         let (resp_tx, resp_rx) = mpsc::channel::<ConfirmationResponse>();
                         let confirmation = ConfirmationRequest {
                             tool_name: tool_name.to_owned(),
@@ -315,22 +337,52 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
                             responder: resp_tx,
                         };
                         if tx.send(AgentEvent::Confirmation(confirmation)).is_err() {
-                            return; // UI 已关
+                            return;
                         }
-                        // 阻塞等用户在 UI 上点按钮
                         match resp_rx.recv() {
-                            Ok(ConfirmationResponse::Confirm) => match tool.execute(&args) {
-                                Ok(s) => format!("（已执行）{s}"),
-                                Err(e) => format!("（工具错误）{}", e.message),
-                            },
+                            Ok(ConfirmationResponse::Confirm) => {
+                                user_confirmed = Some(true);
+                                let exec_inner_start = std::time::Instant::now();
+                                let r = tool.execute(&args);
+                                exec_duration = exec_inner_start.elapsed();
+                                match r {
+                                    Ok(s) => {
+                                        success = true;
+                                        format!("（已执行）{s}")
+                                    }
+                                    Err(e) => {
+                                        success = false;
+                                        format!("（工具错误）{}", e.display_for_model())
+                                    }
+                                }
+                            }
                             Ok(ConfirmationResponse::Reject) => {
+                                user_confirmed = Some(false);
+                                exec_duration = std::time::Duration::ZERO;
+                                success = false;
                                 "（用户拒绝）用户拒绝执行此危险操作。请告诉用户你已停止该操作，并询问是否要尝试其它方式。".to_owned()
                             }
-                            Err(_) => "（错误）确认通道意外关闭".to_owned(),
+                            Err(_) => {
+                                exec_duration = std::time::Duration::ZERO;
+                                success = false;
+                                "（错误）确认通道意外关闭".to_owned()
+                            }
                         }
                     }
                 },
             };
+
+            // v2 Stage 3.2：写审计日志（失败静默，不影响工具结果回传）
+            let audit = audit_log::build_audit(
+                tool_name,
+                raw_args,
+                safety_str,
+                user_confirmed,
+                exec_duration,
+                success,
+                &result_text,
+            );
+            audit_log::append(&audit);
 
             let tool_msg = ChatMessage::tool_result(tc.id.clone(), result_text.clone());
             api_messages.push(OpenAiMessage::from_chat(&tool_msg));

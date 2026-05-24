@@ -25,17 +25,68 @@ pub enum SafetyClass {
 /// 工具执行结果。
 pub type ToolOutput = Result<String, ToolError>;
 
-/// 工具执行的错误描述（中文，可直接给模型当 observation 看）。
+/// 工具执行的错误分类 —— v2 Stage 3.4。
+///
+/// LLM 看到 kind 能更好决策（比单纯看 message 字符串）：
+/// - `PermissionDenied`: 缺权限 → 告诉用户切 admin
+/// - `NotFound`: 路径/资源不存在 → 别重试，问用户路径对不对
+/// - `Timeout`: 操作超时 → 可以重试一次
+/// - `ParseError`: 解析输出失败 → 工具本身 bug，跳过
+/// - `InvalidArgument`: 参数不合法 → 调整参数重试
+/// - `ExternalCommandFailed`: 外部命令非零退出 → 看 message 决定
+/// - `Other`: 未分类
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolErrorKind {
+    PermissionDenied,
+    NotFound,
+    Timeout,
+    ParseError,
+    InvalidArgument,
+    ExternalCommandFailed,
+    Other,
+}
+
+impl ToolErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolErrorKind::PermissionDenied => "permission_denied",
+            ToolErrorKind::NotFound => "not_found",
+            ToolErrorKind::Timeout => "timeout",
+            ToolErrorKind::ParseError => "parse_error",
+            ToolErrorKind::InvalidArgument => "invalid_argument",
+            ToolErrorKind::ExternalCommandFailed => "external_command_failed",
+            ToolErrorKind::Other => "other",
+        }
+    }
+}
+
+/// 工具执行的错误描述（中文 message + 机器可读 kind）。
+///
+/// 给模型当 observation 看的格式：`(<kind>) <message>`
 #[derive(Debug, Clone)]
 pub struct ToolError {
+    pub kind: ToolErrorKind,
     pub message: String,
 }
 
 impl ToolError {
     pub fn new(msg: impl Into<String>) -> Self {
         Self {
+            kind: ToolErrorKind::Other,
             message: msg.into(),
         }
+    }
+
+    pub fn with_kind(kind: ToolErrorKind, msg: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: msg.into(),
+        }
+    }
+
+    /// 给模型看的格式化（带 kind 前缀）。
+    pub fn display_for_model(&self) -> String {
+        format!("({}) {}", self.kind.as_str(), self.message)
     }
 }
 

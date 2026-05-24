@@ -69,6 +69,64 @@ pub fn truncate_history(messages: &mut Vec<OpenAiMessage>, max_input_tokens: usi
     }
 }
 
+/// v2 Stage 3.1：tool_result clearing —— 替代整 turn truncation，对小模型更友好。
+///
+/// 思路（来自 [Anthropic context engineering cookbook](https://platform.claude.com/cookbook/tool-use-context-engineering-context-engineering-tools)）：
+/// - 保留所有 system / user / assistant 消息原样
+/// - 保留**最近 N** 个 tool result 消息原样
+/// - 把更早的 tool result 内容**替换成占位符**：`[cleared, can re-call <tool_id>]`
+///   - tool_call_id 仍保留，让 assistant 消息的 tool_calls 对应关系完整（OpenAI 协议要求）
+///   - 模型看到占位符就知道：要再用这个数据的话，重新调一次工具
+///
+/// 比按 turn 删除更温和：保留对话脉络（"我之前调过哪些工具，问过什么"），只丢弃 stdout 字节。
+/// 对 Qwen3-4B 这种小模型尤其重要 —— 不会"忘掉自己刚做过什么"。
+///
+/// 参数：
+/// - `messages`: 待处理的 OpenAI 消息列表（原地改）
+/// - `keep_recent_tool_results`: 保留最近 N 个 tool result 内容原样（默认 4）
+///
+/// 返回：被 cleared 的 tool result 数量。
+pub fn clear_old_tool_results(
+    messages: &mut [OpenAiMessage],
+    keep_recent_tool_results: usize,
+) -> usize {
+    // 倒序找 tool result，保留最近 N 个；前面的 cleared
+    let tool_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| if m.role == "tool" { Some(i) } else { None })
+        .collect();
+
+    if tool_indices.len() <= keep_recent_tool_results {
+        return 0; // 数量不足以触发 clearing
+    }
+
+    let cutoff = tool_indices.len() - keep_recent_tool_results;
+    let to_clear: Vec<usize> = tool_indices[..cutoff].to_vec();
+    let cleared = to_clear.len();
+
+    for idx in to_clear {
+        let tool_call_id = messages[idx].tool_call_id.clone().unwrap_or_default();
+        // 替换 content；保留 tool_call_id 让 OpenAI 协议配对完整
+        messages[idx].content = Some(Content::Text(format!(
+            "[cleared, can re-call tool with id={tool_call_id}]"
+        )));
+    }
+    cleared
+}
+
+/// 组合策略：先 clear 老 tool results，再如有必要按 turn truncate。
+///
+/// 优先 clear 而非 truncate —— clear 是「丢字节但保结构」，truncate 是「整段抛弃」。
+/// agent loop 默认调这个。
+pub fn smart_truncate(messages: &mut Vec<OpenAiMessage>, max_input_tokens: usize) {
+    // Step 1: 先 clear 老 tool results（最廉价的减 token 手段）
+    clear_old_tool_results(messages, 4);
+
+    // Step 2: 如果还超，再走 turn-level truncation
+    truncate_history(messages, max_input_tokens);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +186,78 @@ mod tests {
         truncate_history(&mut msgs, 5); // 极低阈值
         // 至少 system 还在
         assert!(msgs.iter().any(|m| m.role == "system"));
+    }
+
+    fn tool_msg(call_id: &str, content: &str) -> OpenAiMessage {
+        OpenAiMessage {
+            role: "tool".to_owned(),
+            content: Some(Content::Text(content.to_owned())),
+            tool_calls: None,
+            tool_call_id: Some(call_id.to_owned()),
+        }
+    }
+
+    #[test]
+    fn clear_old_tool_results_keeps_recent_n() {
+        let big = "result-with-1000-bytes-stdout".repeat(40); // simulate large stdout
+        let mut msgs = vec![
+            msg("system", "sys"),
+            msg("user", "q1"),
+            tool_msg("call_1", &big),
+            tool_msg("call_2", &big),
+            tool_msg("call_3", &big),
+            tool_msg("call_4", &big),
+            tool_msg("call_5", &big),
+            tool_msg("call_6", &big),
+        ];
+        let cleared = clear_old_tool_results(&mut msgs, 4);
+        assert_eq!(cleared, 2, "older 2 should be cleared, recent 4 kept");
+
+        // call_1 + call_2 应被替换
+        let m1 = &msgs[2];
+        assert!(matches!(&m1.content, Some(Content::Text(t)) if t.contains("cleared")));
+        assert_eq!(m1.tool_call_id.as_deref(), Some("call_1"));
+
+        let m2 = &msgs[3];
+        assert!(matches!(&m2.content, Some(Content::Text(t)) if t.contains("cleared")));
+
+        // call_3 ~ call_6 应原样保留
+        for i in 4..8 {
+            assert!(
+                matches!(&msgs[i].content, Some(Content::Text(t)) if t == big.as_str()),
+                "msg index {i} should be intact",
+            );
+        }
+    }
+
+    #[test]
+    fn clear_does_nothing_when_under_threshold() {
+        let mut msgs = vec![
+            msg("system", "sys"),
+            msg("user", "q1"),
+            tool_msg("call_1", "ok"),
+            tool_msg("call_2", "ok"),
+        ];
+        let cleared = clear_old_tool_results(&mut msgs, 4);
+        assert_eq!(cleared, 0);
+    }
+
+    #[test]
+    fn smart_truncate_clears_first_then_truncates() {
+        let big = "x".repeat(800);
+        let mut msgs = vec![
+            msg("system", "sys"),
+            msg("user", "q1"),
+            tool_msg("call_1", &big),
+            tool_msg("call_2", &big),
+            tool_msg("call_3", &big),
+            tool_msg("call_4", &big),
+            tool_msg("call_5", &big),
+            tool_msg("call_6", &big),
+            msg("assistant", "done"),
+        ];
+        smart_truncate(&mut msgs, 2000);
+        // system 在；至少 4 个 tool 完整或被清；不应该把整 user turn 删了
+        assert_eq!(msgs[0].role, "system");
     }
 }

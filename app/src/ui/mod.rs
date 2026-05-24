@@ -5,6 +5,7 @@
 pub mod chat;
 mod fonts;
 pub mod image_picker;
+pub mod log_viewer;
 pub mod power_actions;
 pub mod prompts_file;
 pub mod settings_dialog;
@@ -16,6 +17,7 @@ pub use chat::{render_message, AttachedImage, ChatMessage};
 pub use egui_commonmark::CommonMarkCache;
 pub use fonts::install_chinese_fonts;
 pub use image_picker::{load_path_as_attached, pick_image_files};
+pub use log_viewer::open_log_dir;
 pub use power_actions::{draw_power_confirmation_dialog, PowerAction};
 pub use prompts_file::{scan_user_prompts, UserPrompt};
 pub use settings_dialog::{draw_settings_dialog, SettingsAction, SettingsBuffer};

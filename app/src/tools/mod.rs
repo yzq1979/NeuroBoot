@@ -7,6 +7,7 @@
 //!
 //! 阶段 4 起加 dangerous/ 子目录（修复/破坏性工具，执行前必须人工确认）。
 
+pub mod audit_log;
 pub mod dangerous;
 pub mod ps_helper;
 pub mod registry;
