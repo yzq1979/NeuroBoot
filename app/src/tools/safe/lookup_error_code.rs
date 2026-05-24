@@ -244,9 +244,10 @@ impl Tool for LookupErrorCode {
          \"cn_desc\":\"启动时找不到 / 无法访问启动盘\",\"causes\":\"...\",\
          \"docs_url\":\"https://learn.microsoft.com/...\"}`\n\
          \n\
-         **Notes**: v3.0 MVP 用 hardcoded 表（~25 个最高频 code）—— 覆盖 PE 救援场景 80%；\
-         v3.1 W5-6 升级为 sqlite-vec + Qwen3-Embedding 向量检索完整 Microsoft 文档 \
-         (~17k codes)，调用方零成本（同 API）；\
+         **Notes**: v3.0 W5-6 Phase 1 优先查 RAG db（FTS5 trigram，covers ~50 fixture）；\
+         db 不存在 / 未命中时回退 hardcoded 24 条表（覆盖 PE 救援场景 80%）。\
+         `source` 字段标明命中来源（`rag` / `hardcoded`）。Phase 2 升级 sqlite-vec + Qwen3-Embedding \
+         向量检索完整 Microsoft 文档（~17k codes），API 不变。\
          返回 `found: false` 时**不要编**含义，直接告诉用户查 docs_url。"
     }
 
@@ -287,10 +288,30 @@ impl Tool for LookupErrorCode {
             ));
         }
 
+        // v3.0 W5-6 Phase 1: 优先 RAG db（49 fixture + 未来 17k 真数据）；
+        // db 缺失 / 查不到 → 回退到下面的 hardcoded 24 条表。
+        if let Some(rag) = crate::rag::RagClient::discover() {
+            if let Ok(hits) = rag.lookup(&normalized, 1) {
+                if let Some(hit) = hits.first() {
+                    return Ok(serde_json::to_string(&json!({
+                        "found": true,
+                        "source": "rag",
+                        "code": hit.code,
+                        "name": hit.name,
+                        "cn_desc": hit.cn_desc,
+                        "causes": hit.causes,
+                        "docs_url": hit.docs_url
+                    }))
+                    .unwrap_or_else(|_| "{}".to_owned()));
+                }
+            }
+        }
+
         // 在 hardcoded 表里找；匹配规则：归一化后完全相等
         if let Some(entry) = COMMON_CODES.iter().find(|e| e.code == normalized) {
             return Ok(serde_json::to_string(&json!({
                 "found": true,
+                "source": "hardcoded",
                 "code": entry.code,
                 "name": entry.name,
                 "cn_desc": entry.cn_desc,
@@ -414,6 +435,21 @@ mod tests {
         let r = LookupErrorCode.execute(&json!({ "code": "0x80070005" })).unwrap();
         assert!(r.contains("E_ACCESSDENIED"));
         assert!(r.contains("\"found\":true"));
+    }
+
+    #[test]
+    fn result_includes_source_field() {
+        // v3.0 W5-6 Phase 1: every found result tags its source as
+        // "rag" or "hardcoded" so the agent can debug retrieval failures.
+        let r = LookupErrorCode.execute(&json!({ "code": "0x7B" })).unwrap();
+        assert!(r.contains("\"source\":"));
+        // Source must be one of the two known values.
+        let is_rag = r.contains("\"source\":\"rag\"");
+        let is_hc = r.contains("\"source\":\"hardcoded\"");
+        assert!(
+            is_rag || is_hc,
+            "source must be 'rag' or 'hardcoded', got: {r}"
+        );
     }
 
     #[test]

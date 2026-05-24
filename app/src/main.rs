@@ -15,6 +15,7 @@ mod hooks;
 mod llm;
 mod mcp;
 mod memory;
+mod rag;
 mod tools;
 mod ui;
 

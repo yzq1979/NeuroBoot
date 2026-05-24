@@ -34,6 +34,14 @@ base64 = "0.22"
 # default-features = false 关掉 better_syntax_highlighting (拉 syntect ~10 MB)。
 egui_commonmark = { version = "0.23", default-features = false, features = ["pulldown_cmark"] }
 
+# v3.0 W5-6 Phase 1: SQLite for the error-code RAG db (FTS5 trigram for CJK).
+# - `bundled` feature compiles SQLite from source into our binary -- no
+#   sqlite3.dll dependency, which matters for PE (might not ship sqlite).
+# - bundled SQLite is >=3.46 which has the FTS5 trigram tokenizer built in.
+# - Phase 2 will add `sqlite-vec = "0.1"` for vector search; not yet needed
+#   for the FTS5-only skeleton.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 [dev-dependencies]
 # 临时目录 —— v3.0 W6-7 memory 模块单测用（path traversal 校验 + 6 命令在隔离 tmp 跑）。
 # 仅 dev-deps 不进 release binary。

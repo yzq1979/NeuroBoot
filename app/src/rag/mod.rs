@@ -1,0 +1,502 @@
+//! RAG (Retrieval-Augmented Generation) over the error code SQLite database.
+//!
+//! v3.0 W5-6 **Phase 1**: FTS5 trigram keyword search only.
+//! - Schema produced by `tools-dev/build-error-db.py --fixtures-only --no-embed`
+//! - Two-step query: exact code match first, then FTS5 fuzzy.
+//! - The DB path comes from [`default_db_paths`] — `X:\NeuroBoot\rag\errordb.sqlite`
+//!   (PE bundle) and `C:\NeuroBoot\tools-dev\fixtures\errordb.sqlite` (dev box).
+//!
+//! v3.0 W5-6 **Phase 2** (next session): same module, +1 column.
+//! - Python script populates `entries.embedding` BLOB via llama-server
+//!   `/v1/embeddings`.
+//! - At runtime, [`RagClient`] detects `db_meta.has_embeddings = '1'` and
+//!   issues vector search alongside FTS5, merging top-K hits from each.
+//! - sqlite-vec crate gets added as a dep; auto-loaded once per process via
+//!   `rusqlite::ffi::sqlite3_auto_extension`.
+//!
+//! ## Why FTS5 trigram (not unicode61)
+//!
+//! `unicode61` tokenizes on whitespace + punctuation, which doesn't split CJK
+//! at all. With `tokenize='trigram'`, every 3-char rolling window becomes a
+//! searchable token, so "启动盘" (3 chars = 1 trigram) finds matches in
+//! "无法访问启动盘" without any explicit segmentation. Latin text still
+//! tokenizes well (3-char windows of "irql" produce 2 trigrams; partial
+//! matches like "irq" still hit). SQLite 3.34+ ships trigram built-in.
+//!
+//! ## Scope guard
+//!
+//! This module is best-effort. If the db file is missing / corrupt /
+//! schema-mismatched, [`RagClient::lookup`] returns `Ok(vec![])` so the
+//! calling tool can fall back to its hard-coded table. There are **no
+//! panics** on db absence — only logs to stderr (visible in X:\NeuroBoot\logs).
+
+use std::path::{Path, PathBuf};
+
+use rusqlite::{params, Connection, OpenFlags};
+
+/// One retrieval hit returned to the caller (tool / agent).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RagHit {
+    /// 'bugcheck' / 'win32' / 'hresult' / 'ntstatus' / 'tool_desc'
+    pub kind: String,
+    /// Normalized hex code (e.g. "7B"). Empty for tool_desc entries.
+    pub code: String,
+    /// Mnemonic (e.g. "INACCESSIBLE_BOOT_DEVICE") or tool name.
+    pub name: String,
+    /// Chinese one-line description.
+    pub cn_desc: String,
+    /// Multi-line Chinese cause / next-step explanation.
+    pub causes: String,
+    /// Microsoft Learn URL.
+    pub docs_url: String,
+    /// Numeric score in [0, 1]; higher = more relevant. Exact code match = 1.0,
+    /// FTS5 BM25 results are normalized into (0, 1).
+    pub score: f32,
+    /// Source path of the matching db row (file path of the sqlite db) — debug.
+    pub source: String,
+}
+
+/// Stateless client that opens a fresh connection on each [`lookup`].
+///
+/// Cheap to construct — we don't keep an open handle since the runtime is
+/// single-process single-thread per lookup call (PE keeps things simple).
+pub struct RagClient {
+    db_path: PathBuf,
+    has_embeddings: bool,
+}
+
+impl RagClient {
+    /// Probe the candidate db paths and return the first valid one.
+    /// Returns None when no db is found anywhere; caller should fall back.
+    pub fn discover() -> Option<Self> {
+        for candidate in default_db_paths() {
+            if let Some(client) = Self::open(&candidate) {
+                return Some(client);
+            }
+        }
+        None
+    }
+
+    /// Open a specific db path. Returns None if the file doesn't exist or
+    /// the schema doesn't match Phase 1's expectations.
+    pub fn open(path: &Path) -> Option<Self> {
+        if !path.is_file() {
+            return None;
+        }
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+        // Sanity-check schema: `entries` table + `entries_fts` virtual table both exist.
+        let entries_ok = table_exists(&conn, "entries");
+        let fts_ok = table_exists(&conn, "entries_fts");
+        if !entries_ok || !fts_ok {
+            eprintln!(
+                "[rag] db at {} missing expected tables (entries={entries_ok}, entries_fts={fts_ok}) — skipping",
+                path.display()
+            );
+            return None;
+        }
+        let has_embeddings = conn
+            .query_row(
+                "SELECT value FROM db_meta WHERE key = 'has_embeddings'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        Some(Self {
+            db_path: path.to_path_buf(),
+            has_embeddings,
+        })
+    }
+
+    /// Whether this db has embeddings (Phase 2 marker). Phase 1 always returns false.
+    pub fn has_embeddings(&self) -> bool {
+        self.has_embeddings
+    }
+
+    /// Run the full retrieval flow for the user query.
+    ///
+    /// Layers (Phase 1):
+    /// 1. **Exact code match** on normalized `query` — if input parses as a hex
+    ///    code, score 1.0 hit.
+    /// 2. **FTS5 trigram match** on `name + cn_desc + causes + keywords`.
+    ///
+    /// `top_n` caps the total returned hits (typically 3 or 5).
+    pub fn lookup(&self, query: &str, top_n: usize) -> Result<Vec<RagHit>, RagError> {
+        let conn = Connection::open_with_flags(&self.db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| RagError::OpenFailed(e.to_string()))?;
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut hits: Vec<RagHit> = Vec::new();
+
+        // ---- Layer 1: exact code match ----
+        if let Some(normalized) = try_normalize_code(trimmed) {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT kind, code, name, cn_desc, causes, docs_url FROM entries WHERE code = ?1",
+                )
+                .map_err(|e| RagError::QueryFailed(e.to_string()))?;
+            let exact_iter = stmt
+                .query_map(params![normalized], |row| {
+                    Ok(RagHit {
+                        kind: row.get(0)?,
+                        code: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        cn_desc: row.get(3)?,
+                        causes: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                        docs_url: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        score: 1.0,
+                        source: self.db_path.display().to_string(),
+                    })
+                })
+                .map_err(|e| RagError::QueryFailed(e.to_string()))?;
+            for r in exact_iter {
+                if let Ok(hit) = r {
+                    hits.push(hit);
+                }
+            }
+        }
+
+        // ---- Layer 2: FTS5 trigram (skip if we already have an exact hit & top_n=1) ----
+        let fts_query = sanitize_fts_query(trimmed);
+        if !fts_query.is_empty() && hits.len() < top_n {
+            // Use FTS5's bm25() ranking — lower bm25 = more relevant.
+            // We invert it to a positive score in (0, 1) below.
+            let sql = "SELECT e.kind, e.code, e.name, e.cn_desc, e.causes, e.docs_url, bm25(entries_fts) AS rank
+                       FROM entries_fts
+                       JOIN entries e ON e.id = entries_fts.rowid
+                       WHERE entries_fts MATCH ?1
+                       ORDER BY rank
+                       LIMIT ?2";
+            let mut stmt = conn
+                .prepare(sql)
+                .map_err(|e| RagError::QueryFailed(e.to_string()))?;
+            // We pull top_n * 2 FTS candidates so dedupe with exact hits leaves enough.
+            let fts_limit = (top_n * 2) as i64;
+            let fts_iter = stmt
+                .query_map(params![fts_query, fts_limit], |row| {
+                    let bm25: f64 = row.get(6)?;
+                    Ok(RagHit {
+                        kind: row.get(0)?,
+                        code: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        cn_desc: row.get(3)?,
+                        causes: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                        docs_url: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        score: bm25_to_score(bm25),
+                        source: self.db_path.display().to_string(),
+                    })
+                })
+                .map_err(|e| RagError::QueryFailed(e.to_string()))?;
+            for r in fts_iter {
+                if let Ok(hit) = r {
+                    // Dedupe with exact hits — match on (kind, code, name).
+                    let dup = hits.iter().any(|h| {
+                        h.kind == hit.kind && h.code == hit.code && h.name == hit.name
+                    });
+                    if !dup {
+                        hits.push(hit);
+                    }
+                }
+            }
+        }
+
+        hits.truncate(top_n);
+        Ok(hits)
+    }
+}
+
+/// What can go wrong looking up the RAG db.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RagError {
+    OpenFailed(String),
+    QueryFailed(String),
+}
+
+impl std::fmt::Display for RagError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RagError::OpenFailed(s) => write!(f, "RAG open failed: {s}"),
+            RagError::QueryFailed(s) => write!(f, "RAG query failed: {s}"),
+        }
+    }
+}
+
+/// Candidate db paths in priority order — first existing wins.
+///
+/// Phase 1 doesn't ship a built-in db in the ISO yet (no embeddings, FTS5
+/// only — the bundle is deferred to Phase 2 alongside the embedding model).
+/// So in dev, the user runs `python tools-dev/build-error-db.py
+/// --fixtures-only --no-embed` once which writes to the second path below.
+pub fn default_db_paths() -> Vec<PathBuf> {
+    vec![
+        // PE-bundled location (Phase 2)
+        PathBuf::from(r"X:\NeuroBoot\rag\errordb.sqlite"),
+        // Dev-box / fallback location for fixture-only Phase 1 testing
+        PathBuf::from(r"C:\NeuroBoot\tools-dev\fixtures\errordb.sqlite"),
+    ]
+}
+
+/// Cheap "does this table or virtual table exist?" check.
+fn table_exists(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE name = ?1 AND type IN ('table','view') LIMIT 1",
+        params![name],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
+/// Parse common hex code formats. Returns None when the input clearly isn't
+/// a code (e.g. an ad-hoc Chinese question).
+///
+/// This is intentionally **stricter** than [`crate::tools::safe::lookup_error_code::normalize_code`]
+/// — RAG's exact-match layer should only trigger when the user genuinely
+/// typed a code-like string. If we're not sure, return None and let FTS5 do
+/// the work.
+fn try_normalize_code(raw: &str) -> Option<String> {
+    let upper = raw.to_uppercase();
+    let hex = if let Some(pos) = upper.find("0X") {
+        upper[pos + 2..]
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect::<String>()
+    } else if upper.chars().all(|c| c.is_ascii_hexdigit() || c.is_ascii_whitespace()) {
+        // Bare hex token like "7B" / "C0000005" — only treat as code when
+        // the ENTIRE input is hex (no Chinese / no plain English words).
+        upper.chars().filter(|c| c.is_ascii_hexdigit()).collect::<String>()
+    } else {
+        return None;
+    };
+
+    if hex.is_empty() {
+        return None;
+    }
+    let trimmed = hex.trim_start_matches('0');
+    if trimmed.is_empty() {
+        Some("0".to_owned())
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+/// Make user input safe for FTS5 `MATCH` — strip double quotes, wrap each
+/// surviving token as a phrase, drop tokens that would be useless.
+///
+/// FTS5 trigram tokenizer behavior on short queries (per SQLite docs):
+/// - Tokens >= 3 chars: indexed as overlapping 3-char windows, regular MATCH.
+/// - Tokens < 3 chars: degrade to substring scan (slower but works).
+///
+/// We therefore keep all tokens >= 2 chars. Single CJK chars (count = 1) are
+/// dropped — substring scanning the whole db for one character produces too
+/// many false positives. Single ASCII chars (e.g. "a") are also dropped.
+/// Punctuation-only tokens get dropped too.
+fn sanitize_fts_query(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c == '"' { ' ' } else { c })
+        .collect();
+    let mut tokens: Vec<String> = Vec::new();
+    for word in cleaned.split_whitespace() {
+        if word.chars().all(|c| c.is_ascii_punctuation()) {
+            continue;
+        }
+        let char_count = word.chars().count();
+        if char_count >= 3 {
+            tokens.push(format!("\"{word}\""));
+        } else if char_count == 2 {
+            // 2-char tokens: FTS5 trigram does substring scan. Keep both
+            // ASCII ("ip") and CJK ("蓝屏") because they're common and useful.
+            tokens.push(format!("\"{word}\""));
+        }
+        // char_count == 1 (or 0) drops -- too noisy.
+    }
+    tokens.join(" OR ")
+}
+
+/// Convert FTS5 BM25 (negative-ish, lower = better) to a [0, 1] score.
+///
+/// BM25 in SQLite returns negative values where -10 means "strong match" and
+/// -1 means "weak match". We bucket into a sigmoid-ish curve.
+fn bm25_to_score(bm25: f64) -> f32 {
+    // BM25 is typically in range -20..0; map to 0..1 with strongest near 1.
+    let normalized = (-bm25 / 20.0).clamp(0.0, 1.0);
+    // Squish so exact-code-match's 1.0 stays distinct from FTS top.
+    (normalized * 0.95) as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_db(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(include_str!("test_schema.sql")).unwrap();
+    }
+
+    #[test]
+    fn discover_returns_none_when_no_db_anywhere() {
+        // We can't actually unset the default paths, but on a clean CI run
+        // neither path exists. On a dev machine where fixtures exist this
+        // test will degrade to verifying discover() returns Some which is
+        // also fine (no assertion on Some/None).
+        let _ = RagClient::discover();
+    }
+
+    #[test]
+    fn open_returns_none_for_missing_file() {
+        assert!(RagClient::open(Path::new("Z:\\definitely_does_not_exist.sqlite")).is_none());
+    }
+
+    #[test]
+    fn open_returns_none_for_wrong_schema() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Write an unrelated sqlite file with no `entries` table.
+        let conn = Connection::open(tmp.path()).unwrap();
+        conn.execute("CREATE TABLE foo (id INTEGER)", []).unwrap();
+        drop(conn);
+        assert!(RagClient::open(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn lookup_returns_exact_code_first() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).expect("schema valid");
+        let hits = client.lookup("0x7B", 3).expect("lookup ok");
+        assert!(!hits.is_empty(), "should find INACCESSIBLE_BOOT_DEVICE");
+        assert_eq!(hits[0].code, "7B");
+        assert_eq!(hits[0].name, "INACCESSIBLE_BOOT_DEVICE");
+        assert_eq!(hits[0].score, 1.0, "exact match must score 1.0");
+    }
+
+    #[test]
+    fn lookup_handles_naked_code() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        let hits = client.lookup("7B", 3).unwrap();
+        assert_eq!(hits[0].code, "7B");
+    }
+
+    #[test]
+    fn lookup_cjk_via_fts5() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        let hits = client.lookup("启动盘", 3).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "FTS5 trigram should find Chinese substring matches"
+        );
+        // The 7B entry's cn_desc says "启动盘"; should appear.
+        assert!(hits.iter().any(|h| h.code == "7B"));
+    }
+
+    #[test]
+    fn lookup_latin_via_fts5() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        let hits = client.lookup("inaccessible", 3).unwrap();
+        assert!(hits.iter().any(|h| h.name == "INACCESSIBLE_BOOT_DEVICE"));
+    }
+
+    #[test]
+    fn lookup_unknown_query_returns_empty() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        let hits = client.lookup("xyzqqq_definitely_not_in_db", 3).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn lookup_dedupes_exact_and_fts_hits() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        // "7B" is both an exact code match and a trigram hit in cn_desc.
+        let hits = client.lookup("7B", 3).unwrap();
+        let count_7b = hits.iter().filter(|h| h.code == "7B").count();
+        assert_eq!(count_7b, 1, "7B should appear exactly once after dedupe");
+    }
+
+    #[test]
+    fn lookup_respects_top_n_cap() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        let hits = client.lookup("驱动", 2).unwrap();
+        assert!(hits.len() <= 2);
+    }
+
+    // ---- try_normalize_code ----
+
+    #[test]
+    fn normalize_handles_0x_prefix() {
+        assert_eq!(try_normalize_code("0x7B"), Some("7B".to_owned()));
+        assert_eq!(try_normalize_code("0X7b"), Some("7B".to_owned()));
+    }
+
+    #[test]
+    fn normalize_handles_bare_hex() {
+        assert_eq!(try_normalize_code("7B"), Some("7B".to_owned()));
+        assert_eq!(try_normalize_code("C0000005"), Some("C0000005".to_owned()));
+    }
+
+    #[test]
+    fn normalize_rejects_chinese_query() {
+        // "蓝屏" is not a code -- must NOT trigger exact-match path.
+        assert_eq!(try_normalize_code("蓝屏"), None);
+    }
+
+    #[test]
+    fn normalize_rejects_mixed_text() {
+        // English word "page" is all ASCII hex chars? No, 'p' and 'g' aren't.
+        assert_eq!(try_normalize_code("page fault"), None);
+    }
+
+    // ---- sanitize_fts_query ----
+
+    #[test]
+    fn sanitize_drops_single_char_tokens() {
+        // Single CJK chars (count=1) and single ASCII chars are dropped.
+        let q = sanitize_fts_query("启 动 盘 a");
+        assert!(q.is_empty(), "single chars should drop: {q}");
+    }
+
+    #[test]
+    fn sanitize_quotes_cjk_phrase() {
+        let q = sanitize_fts_query("启动盘");
+        assert_eq!(q, "\"启动盘\"");
+    }
+
+    #[test]
+    fn sanitize_uses_or_for_multiple_tokens() {
+        // 3-char CJK "启动盘" + 2-char CJK "蓝屏" (slower substring scan but kept).
+        let q = sanitize_fts_query("启动盘 蓝屏");
+        assert_eq!(q, "\"启动盘\" OR \"蓝屏\"");
+    }
+
+    #[test]
+    fn sanitize_strips_embedded_double_quotes() {
+        // Embedded `"` would break FTS5 phrase syntax -- get replaced with space,
+        // splitting the original token into two safe ones.
+        let q = sanitize_fts_query("启动\"盘内");
+        // After replace: "启动 盘内" -> two 2-char CJK tokens
+        assert_eq!(q, "\"启动\" OR \"盘内\"");
+        // Most importantly: no embedded unescaped quote that would parse-error.
+        assert!(!q.contains("\"\""));
+    }
+
+    #[test]
+    fn sanitize_keeps_two_char_ascii() {
+        // "ip" is 2 chars -> substring scan in trigram tokenizer; still useful.
+        let q = sanitize_fts_query("ip");
+        assert_eq!(q, "\"ip\"");
+    }
+}

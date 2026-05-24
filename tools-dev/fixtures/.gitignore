@@ -1,0 +1,5 @@
+errordb.sqlite
+errordb-*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
