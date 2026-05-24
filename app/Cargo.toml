@@ -28,3 +28,8 @@ rfd = { version = "0.15", default-features = false }
 # Base64 编码 —— v1.0.1+ 图片以 data URL (data:image/jpeg;base64,...) 形式塞
 # OpenAI 兼容 vision API 的 image_url 字段。base64 crate 很小，无 deps。
 base64 = "0.22"
+
+# Markdown 渲染（v2 P0）—— Assistant 消息文本支持 **粗体** / 列表 / 代码块 / 标题。
+# 必须用 0.23 才能匹配 egui 0.34（0.21 会拉进 egui 0.32 导致类型不兼容）。
+# default-features = false 关掉 better_syntax_highlighting (拉 syntect ~10 MB)。
+egui_commonmark = { version = "0.23", default-features = false, features = ["pulldown_cmark"] }

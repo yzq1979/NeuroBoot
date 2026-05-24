@@ -28,8 +28,8 @@ use tools::ToolRegistry;
 use ui::{
     draw_power_confirmation_dialog, draw_settings_dialog, install_chinese_fonts, launch_cmd,
     launch_file_manager, load_path_as_attached, pick_image_files, render_message,
-    scan_user_prompts, AttachedImage, ChatMessage, PowerAction, SettingsAction, SettingsBuffer,
-    StatusBarState, UserPrompt,
+    scan_user_prompts, AttachedImage, ChatMessage, CommonMarkCache, PowerAction, SettingsAction,
+    SettingsBuffer, StatusBarState, UserPrompt,
 };
 
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -118,6 +118,8 @@ struct NeuroBootApp {
     status_bar: StatusBarState,
     /// 当前正在输入的消息附带的图片（点「+ 图片」加，点 X 删，submit 后清空）
     attached_images: Vec<AttachedImage>,
+    /// Markdown 渲染缓存（避免每帧重 parse Assistant 消息）
+    md_cache: CommonMarkCache,
 }
 
 impl Default for NeuroBootApp {
@@ -130,12 +132,22 @@ impl Default for NeuroBootApp {
             probe_hint,
         } = detect_endpoints(DEFAULT_ENDPOINT, DEFAULT_MODEL);
 
-        // 注册工具：3 个 safe + 1 个 dangerous
+        // 注册工具：v1 baseline (3 safe + 1 dangerous) + v2 P0 (8 safe)
         let mut registry = ToolRegistry::new();
+        // v1 baseline
         registry.register(Box::new(tools::safe::list_disks::ListDisks));
         registry.register(Box::new(tools::safe::read_system_info::ReadSystemInfo));
         registry.register(Box::new(tools::safe::read_event_log_errors::ReadEventLogErrors));
         registry.register(Box::new(tools::dangerous::delete_path::DeletePath));
+        // v2 P0 新增 safe 工具
+        registry.register(Box::new(tools::safe::list_partitions::ListPartitions));
+        registry.register(Box::new(tools::safe::list_volumes::ListVolumes));
+        registry.register(Box::new(tools::safe::read_ip_config::ReadIpConfig));
+        registry.register(Box::new(tools::safe::list_network_adapters::ListNetworkAdapters));
+        registry.register(Box::new(tools::safe::list_processes_top::ListProcessesTop));
+        registry.register(Box::new(tools::safe::list_services::ListServices));
+        registry.register(Box::new(tools::safe::list_minidumps::ListMinidumps));
+        registry.register(Box::new(tools::safe::list_recent_shutdowns::ListRecentShutdowns));
 
         let user_prompts = scan_user_prompts();
         let prompts_hint = if user_prompts.is_empty() {
@@ -186,6 +198,7 @@ impl Default for NeuroBootApp {
                 s
             },
             attached_images: Vec::new(),
+            md_cache: CommonMarkCache::default(),
         }
     }
 }
@@ -402,13 +415,15 @@ impl eframe::App for NeuroBootApp {
             });
 
         // ----- 中央：消息列表 -----
+        let messages = &self.messages;
+        let md_cache = &mut self.md_cache;
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    for msg in &self.messages {
-                        render_message(ui, msg);
+                    for msg in messages {
+                        render_message(ui, msg, md_cache);
                     }
                 });
         });

@@ -12,6 +12,8 @@ pub mod status_bar;
 pub mod system_launchers;
 
 pub use chat::{render_message, AttachedImage, ChatMessage};
+// Re-export egui_commonmark cache for main.rs to hold a shared instance
+pub use egui_commonmark::CommonMarkCache;
 pub use fonts::install_chinese_fonts;
 pub use image_picker::{load_path_as_attached, pick_image_files};
 pub use power_actions::{draw_power_confirmation_dialog, PowerAction};

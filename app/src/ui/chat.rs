@@ -5,6 +5,7 @@
 //! 阶段 v1.0.1+ 加 `images: Vec<AttachedImage>` 字段，支持 vision 多模态。
 
 use eframe::egui;
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
 /// 聊天消息的角色 —— OpenAI 兼容协议里 `role` 字段的对应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,24 +156,50 @@ impl ChatMessage {
 /// 在 ui 上渲染一条聊天消息：角色前缀（带颜色）+ 内容 + 可能的 tool_calls 摘要 + 附图 chips。
 ///
 /// 渲染策略：
-/// - User / Assistant / Tool：前缀 + 内容
+/// - User：前缀 + 纯文本 label（用户输入不假设 Markdown）
+/// - Assistant：前缀 + **Markdown 渲染** (v2 P0，CommonMarkViewer 处理 **bold** / 列表 / 代码块 /
+///   表格 / 引用 等)；模型常用 Markdown 输出，能渲染极大提升观感
+/// - Tool：前缀 + 等宽 code-style label（JSON / stdout 用等宽显示更整齐，且不让 Markdown 误解析）
 /// - System：默认不显示（system prompt 通常不暴露给用户）
 /// - Assistant 含 tool_calls：内容之后追加每个 tool_call 的「工具：name(args)」橙色摘要
 /// - User 含 images：内容之后追加每张图的「📷 filename (size)」chip
-pub fn render_message(ui: &mut egui::Ui, msg: &ChatMessage) {
+pub fn render_message(ui: &mut egui::Ui, msg: &ChatMessage, md_cache: &mut CommonMarkCache) {
     // System 消息不显示给用户（避免把 system prompt 暴露在聊天框里）
     if msg.role == Role::System {
         return;
     }
 
     if !msg.content.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            ui.colored_label(
-                msg.role.display_color(),
-                format!("{}：", msg.role.display_prefix()),
-            );
-            ui.label(&msg.content);
-        });
+        match msg.role {
+            Role::Assistant => {
+                // 角色前缀 + Markdown 渲染：前缀单起一行让模型的 Markdown 行宽充分
+                ui.colored_label(
+                    msg.role.display_color(),
+                    format!("{}：", msg.role.display_prefix()),
+                );
+                CommonMarkViewer::new().show(ui, md_cache, &msg.content);
+            }
+            Role::Tool => {
+                // 工具结果通常是 JSON / stdout：用等宽字体让数字 / 缩进对齐
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(
+                        msg.role.display_color(),
+                        format!("{}：", msg.role.display_prefix()),
+                    );
+                });
+                ui.monospace(&msg.content);
+            }
+            _ => {
+                // User: 前缀 + 纯文本
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(
+                        msg.role.display_color(),
+                        format!("{}：", msg.role.display_prefix()),
+                    );
+                    ui.label(&msg.content);
+                });
+            }
+        }
     }
 
     // User 附图：每张图渲染成蓝色 chip「📷 filename (size)」
