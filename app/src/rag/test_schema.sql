@@ -1,6 +1,6 @@
--- Test schema for app/src/rag/mod.rs unit tests. Mirrors the schema produced
--- by `tools-dev/build-error-db.py` Phase 1 (no embedding column populated).
--- Two entries are enough to verify exact-code + FTS5 + dedup paths.
+-- Test schema for app/src/rag/mod.rs unit tests (Phase 1 -- no vec0 table).
+-- Mirrors the schema produced by `tools-dev/build-error-db.py
+-- --fixtures-only --no-embed`. Phase 2 tests live in test_schema_v2.sql.
 
 CREATE TABLE entries (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -30,6 +30,8 @@
 //! calling tool can fall back to its hard-coded table. There are **no
 //! panics** on db absence — only logs to stderr (visible in X:\NeuroBoot\logs).
 
+pub mod vec_ext;
+
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OpenFlags};
@@ -62,7 +64,18 @@ pub struct RagHit {
 /// single-process single-thread per lookup call (PE keeps things simple).
 pub struct RagClient {
     db_path: PathBuf,
+    /// True only when BOTH db_meta.has_embeddings = '1' AND entries_vec exists.
     has_embeddings: bool,
+    /// Optional embedding endpoint -- set by [`with_embedder`].
+    embedder: Option<EmbedderConfig>,
+}
+
+/// Config for calling an OpenAI-compatible /v1/embeddings endpoint
+/// (typically the same llama-server that hosts the chat model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbedderConfig {
+    pub endpoint: String,
+    pub model: String,
 }
 
 impl RagClient {
@@ -83,6 +96,10 @@ impl RagClient {
         if !path.is_file() {
             return None;
         }
+        // v3.0 W5-6 Phase 2: register sqlite-vec before any Connection::open
+        // so vec0 / vec_distance / etc. are available. Idempotent across calls.
+        let _ = vec_ext::register_once();
+
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
         // Sanity-check schema: `entries` table + `entries_fts` virtual table both exist.
         let entries_ok = table_exists(&conn, "entries");
@@ -103,13 +120,25 @@ impl RagClient {
             .ok()
             .map(|v| v == "1")
             .unwrap_or(false);
+        let has_vec_table = table_exists(&conn, "entries_vec");
         Some(Self {
             db_path: path.to_path_buf(),
-            has_embeddings,
+            has_embeddings: has_embeddings && has_vec_table,
+            embedder: None,
         })
     }
 
-    /// Whether this db has embeddings (Phase 2 marker). Phase 1 always returns false.
+    /// Configure an embedding endpoint for vector search.
+    ///
+    /// Returns self for chaining. Subsequent [`lookup_auto`] calls will
+    /// hit the endpoint to embed user queries before vector KNN. No-op at
+    /// query time if the db doesn't have embeddings.
+    pub fn with_embedder(mut self, endpoint: String, model: String) -> Self {
+        self.embedder = Some(EmbedderConfig { endpoint, model });
+        self
+    }
+
+    /// Whether this db has embeddings + vec0 table (Phase 2 ready).
     pub fn has_embeddings(&self) -> bool {
         self.has_embeddings
     }
@@ -207,6 +236,121 @@ impl RagClient {
         hits.truncate(top_n);
         Ok(hits)
     }
+
+    /// v3.0 W5-6 Phase 2 — hybrid retrieval = exact + FTS5 + vector KNN, fused
+    /// via Reciprocal Rank Fusion (RRF).
+    ///
+    /// The caller pre-computes `query_vec` (e.g. via [`Self::embed_query`]).
+    /// Returns hits ordered by RRF score. If the db has no `entries_vec`
+    /// table (Phase 1 db), this silently degrades to the FTS5 + exact path
+    /// (same as [`Self::lookup`]) so callers don't have to branch.
+    pub fn lookup_hybrid(
+        &self,
+        query: &str,
+        query_vec: &[f32],
+        top_n: usize,
+    ) -> Result<Vec<RagHit>, RagError> {
+        if !self.has_embeddings {
+            return self.lookup(query, top_n);
+        }
+
+        // Pull FTS5+exact results first (Phase 1 path).
+        let fts_hits = self.lookup(query, top_n.saturating_mul(2).max(10))?;
+
+        // Then vector top-K.
+        let vec_hits = self.vector_search(query_vec, top_n.saturating_mul(2).max(10))?;
+
+        // Fuse with RRF (k=60 is the canonical default per the original
+        // Cormack/Clarke/Buettcher 2009 paper).
+        Ok(rrf_fuse(&fts_hits, &vec_hits, top_n))
+    }
+
+    /// One-stop entry: if embedder configured + db has embeddings, run hybrid;
+    /// otherwise run plain FTS5+exact.
+    ///
+    /// Errors from the embedding endpoint are demoted to FTS5 fallback (we
+    /// log to stderr but still return useful results).
+    pub fn lookup_auto(&self, query: &str, top_n: usize) -> Result<Vec<RagHit>, RagError> {
+        if let (true, Some(cfg)) = (self.has_embeddings, &self.embedder) {
+            match Self::embed_query(cfg, query) {
+                Ok(query_vec) => return self.lookup_hybrid(query, &query_vec, top_n),
+                Err(e) => {
+                    eprintln!("[rag] embed_query failed ({e}) — falling back to FTS5 only");
+                }
+            }
+        }
+        self.lookup(query, top_n)
+    }
+
+    /// Run a vector KNN over `entries_vec` and JOIN back to `entries`.
+    fn vector_search(&self, query_vec: &[f32], k: usize) -> Result<Vec<RagHit>, RagError> {
+        let conn = Connection::open_with_flags(&self.db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| RagError::OpenFailed(e.to_string()))?;
+        let blob = pack_f32_vec(query_vec);
+        // sqlite-vec's KNN syntax: WHERE embedding MATCH ?1 AND k = ?2.
+        let sql = "SELECT e.kind, e.code, e.name, e.cn_desc, e.causes, e.docs_url, v.distance
+                   FROM entries_vec v
+                   JOIN entries e ON e.id = v.rowid
+                   WHERE v.embedding MATCH ?1 AND v.k = ?2
+                   ORDER BY v.distance";
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| RagError::QueryFailed(e.to_string()))?;
+        let mut out = Vec::new();
+        let iter = stmt
+            .query_map(params![blob.as_slice(), k as i64], |row| {
+                let dist: f64 = row.get(6)?;
+                Ok(RagHit {
+                    kind: row.get(0)?,
+                    code: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    name: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    cn_desc: row.get(3)?,
+                    causes: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    docs_url: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    score: vec_distance_to_score(dist),
+                    source: self.db_path.display().to_string(),
+                })
+            })
+            .map_err(|e| RagError::QueryFailed(e.to_string()))?;
+        for r in iter {
+            if let Ok(hit) = r {
+                out.push(hit);
+            }
+        }
+        Ok(out)
+    }
+
+    /// POST text to the embedding endpoint and return the resulting vector.
+    ///
+    /// Uses the `reqwest::blocking` client we already depend on for LLM calls.
+    /// 10s timeout — embedding a single short query is sub-100 ms typically.
+    pub fn embed_query(cfg: &EmbedderConfig, text: &str) -> Result<Vec<f32>, RagError> {
+        let url = format!("{}/v1/embeddings", cfg.endpoint.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": cfg.model,
+            "input": text,
+        });
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| RagError::OpenFailed(format!("reqwest build: {e}")))?;
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .map_err(|e| RagError::QueryFailed(format!("POST {url}: {e}")))?;
+        let status = resp.status();
+        let text_body = resp
+            .text()
+            .map_err(|e| RagError::QueryFailed(format!("read body: {e}")))?;
+        if !status.is_success() {
+            return Err(RagError::QueryFailed(format!(
+                "embedding endpoint returned {status}: {}",
+                text_body.chars().take(200).collect::<String>()
+            )));
+        }
+        parse_embedding_response(&text_body)
+    }
 }
 
 /// What can go wrong looking up the RAG db.
@@ -223,6 +367,93 @@ impl std::fmt::Display for RagError {
             RagError::QueryFailed(s) => write!(f, "RAG query failed: {s}"),
         }
     }
+}
+
+/// Pack an f32 slice as a little-endian byte buffer suitable for sqlite-vec
+/// `MATCH` parameter binding.
+fn pack_f32_vec(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for x in v {
+        out.extend_from_slice(&x.to_le_bytes());
+    }
+    out
+}
+
+/// Map sqlite-vec L2 distance to a [0, 1] similarity score (1 = identical).
+/// sqlite-vec defaults to L2 squared; for unit-normalized vectors, distance
+/// is in [0, 4] so we map with 1 / (1 + d).
+fn vec_distance_to_score(distance: f64) -> f32 {
+    (1.0 / (1.0 + distance.max(0.0))) as f32
+}
+
+/// Parse an OpenAI-compatible embeddings response and return the first vec.
+/// Format: `{"data":[{"embedding":[0.1, 0.2, ...]}], ...}`.
+fn parse_embedding_response(body: &str) -> Result<Vec<f32>, RagError> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| RagError::QueryFailed(format!("response parse: {e}")))?;
+    let arr = v
+        .get("data")
+        .and_then(|d| d.as_array())
+        .and_then(|a| a.first())
+        .and_then(|e| e.get("embedding"))
+        .and_then(|e| e.as_array())
+        .ok_or_else(|| {
+            RagError::QueryFailed(format!(
+                "missing data[0].embedding in response: {}",
+                body.chars().take(120).collect::<String>()
+            ))
+        })?;
+    let mut out = Vec::with_capacity(arr.len());
+    for x in arr {
+        let f = x
+            .as_f64()
+            .ok_or_else(|| RagError::QueryFailed("embedding element not a number".into()))?;
+        out.push(f as f32);
+    }
+    if out.is_empty() {
+        return Err(RagError::QueryFailed("embedding vector is empty".into()));
+    }
+    Ok(out)
+}
+
+/// Reciprocal Rank Fusion: merge ranked lists from two retrievers into one.
+///
+/// Per Cormack/Clarke/Buettcher 2009, the standard k constant is 60. Each
+/// hit contributes `1 / (k + rank)` to its fused score; the same hit
+/// surfaced by both retrievers gets summed boosts.
+///
+/// Dedup key is (kind, code, name) — same as the FTS5 dedupe in `lookup()`.
+fn rrf_fuse(fts: &[RagHit], vec: &[RagHit], top_n: usize) -> Vec<RagHit> {
+    const K: f32 = 60.0;
+    use std::collections::HashMap;
+    let mut scores: HashMap<(String, String, String), (f32, RagHit)> = HashMap::new();
+    for (i, h) in fts.iter().enumerate() {
+        let key = (h.kind.clone(), h.code.clone(), h.name.clone());
+        let bump = 1.0 / (K + (i as f32 + 1.0));
+        scores
+            .entry(key)
+            .and_modify(|(s, _)| *s += bump)
+            .or_insert((bump, h.clone()));
+    }
+    for (i, h) in vec.iter().enumerate() {
+        let key = (h.kind.clone(), h.code.clone(), h.name.clone());
+        let bump = 1.0 / (K + (i as f32 + 1.0));
+        scores
+            .entry(key)
+            .and_modify(|(s, _)| *s += bump)
+            .or_insert((bump, h.clone()));
+    }
+    let mut merged: Vec<(f32, RagHit)> = scores.into_values().collect();
+    // Sort descending by fused score.
+    merged.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    merged
+        .into_iter()
+        .take(top_n)
+        .map(|(score, mut h)| {
+            h.score = score;
+            h
+        })
+        .collect()
 }
 
 /// Candidate db paths in priority order — first existing wins.
@@ -498,5 +729,178 @@ mod tests {
         // "ip" is 2 chars -> substring scan in trigram tokenizer; still useful.
         let q = sanitize_fts_query("ip");
         assert_eq!(q, "\"ip\"");
+    }
+
+    // -------- Phase 2 (W5-6) --------
+
+    fn make_phase2_db(path: &Path) {
+        // Register the vec extension BEFORE Connection::open so vec0 works.
+        crate::rag::vec_ext::register_once().expect("register vec ext");
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(include_str!("test_schema_v2.sql")).unwrap();
+    }
+
+    #[test]
+    fn open_phase2_db_reports_has_embeddings() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_phase2_db(tmp.path());
+        let client = RagClient::open(tmp.path()).expect("Phase 2 schema valid");
+        assert!(client.has_embeddings(), "Phase 2 db should report embeddings");
+    }
+
+    #[test]
+    fn open_phase1_db_reports_no_embeddings() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path()); // Phase 1 schema
+        let client = RagClient::open(tmp.path()).unwrap();
+        assert!(
+            !client.has_embeddings(),
+            "Phase 1 db should not report embeddings (no vec0 table)"
+        );
+    }
+
+    #[test]
+    fn vector_search_returns_nearest_first() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_phase2_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        // Query identical to entry id=1's vector -> should rank id=1 first.
+        let q = vec![1.0_f32, 0.0, 0.0, 0.0];
+        let hits = client.vector_search(&q, 3).expect("vec search");
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].name, "INACCESSIBLE_BOOT_DEVICE");
+        // BSOD_GENERIC (id=3) is closer to [1,0,0,0] than D1 (id=2) -- it shares
+        // an x-axis component of 0.7 vs 0.
+        assert_eq!(hits[1].name, "BSOD_GENERIC");
+        assert_eq!(hits[2].name, "DRIVER_IRQL_NOT_LESS_OR_EQUAL");
+        // Scores in descending order.
+        assert!(hits[0].score >= hits[1].score);
+        assert!(hits[1].score >= hits[2].score);
+    }
+
+    #[test]
+    fn lookup_hybrid_surfaces_vec_only_hit() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_phase2_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap();
+        // Use a query string that won't match FTS5 (no "蓝屏" / "boot" / "driver"),
+        // so the BSOD_GENERIC hit can only come from vector search.
+        let q_vec = vec![0.5_f32, 0.5, 0.0, 0.0]; // closest to BSOD_GENERIC [0.7,0.7,...]
+        let hits = client
+            .lookup_hybrid("totally_unrelated_query_xyzqqq", &q_vec, 3)
+            .unwrap();
+        assert!(
+            hits.iter().any(|h| h.name == "BSOD_GENERIC"),
+            "BSOD_GENERIC should surface via vec branch despite FTS5 miss; got: {:?}",
+            hits.iter().map(|h| h.name.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn lookup_hybrid_falls_back_to_fts_for_phase1_db() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_test_db(tmp.path()); // Phase 1 (no vec0)
+        let client = RagClient::open(tmp.path()).unwrap();
+        let q_vec = vec![1.0_f32, 0.0, 0.0, 0.0];
+        // Should return the FTS5+exact result for 7B without crashing.
+        let hits = client.lookup_hybrid("0x7B", &q_vec, 3).unwrap();
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].code, "7B");
+    }
+
+    #[test]
+    fn lookup_auto_without_embedder_uses_fts() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_phase2_db(tmp.path());
+        let client = RagClient::open(tmp.path()).unwrap(); // no with_embedder()
+        // Without an embedder configured, lookup_auto should still work via FTS5.
+        let hits = client.lookup_auto("0x7B", 3).unwrap();
+        assert_eq!(hits[0].code, "7B");
+    }
+
+    #[test]
+    fn lookup_auto_demotes_unreachable_embedder() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        make_phase2_db(tmp.path());
+        let client = RagClient::open(tmp.path())
+            .unwrap()
+            .with_embedder(
+                "http://127.0.0.1:1".to_owned(), // unreachable port
+                "qwen3-embedding-0.6b".to_owned(),
+            );
+        // Should NOT propagate the error -- demotes to FTS5.
+        let hits = client.lookup_auto("启动盘", 3).unwrap();
+        assert!(!hits.is_empty(), "must still return results via fallback");
+    }
+
+    // -------- RRF + utility --------
+
+    #[test]
+    fn rrf_fuse_combines_overlapping_hits() {
+        let mk = |name: &str, code: &str, score: f32| RagHit {
+            kind: "bugcheck".into(),
+            code: code.into(),
+            name: name.into(),
+            cn_desc: "x".into(),
+            causes: "y".into(),
+            docs_url: "z".into(),
+            score,
+            source: "t".into(),
+        };
+        // FTS ranks: A, B, C
+        // Vec ranks: B, A, D
+        // Expected fused order: A and B alternate at the top (both in both lists),
+        // with A scoring (1/61 + 1/62) and B scoring (1/62 + 1/61) -- effectively
+        // tied. C and D each appear once.
+        let fts = vec![mk("A", "1", 0.0), mk("B", "2", 0.0), mk("C", "3", 0.0)];
+        let vec = vec![mk("B", "2", 0.0), mk("A", "1", 0.0), mk("D", "4", 0.0)];
+        let fused = rrf_fuse(&fts, &vec, 4);
+        assert_eq!(fused.len(), 4);
+        let names: Vec<&str> = fused.iter().map(|h| h.name.as_str()).collect();
+        // First two slots must be A and B (in either order).
+        let top2: std::collections::HashSet<&str> = names[..2].iter().copied().collect();
+        assert!(top2.contains("A") && top2.contains("B"));
+        // Other two are C / D.
+        let rest: std::collections::HashSet<&str> = names[2..].iter().copied().collect();
+        assert!(rest.contains("C") && rest.contains("D"));
+    }
+
+    #[test]
+    fn pack_f32_vec_layout() {
+        let v = vec![1.0_f32, 0.0, -1.0];
+        let bytes = pack_f32_vec(&v);
+        assert_eq!(bytes.len(), 12);
+        // 1.0 = 0x3F800000 LE = 00 00 80 3F
+        assert_eq!(&bytes[0..4], &[0x00, 0x00, 0x80, 0x3F]);
+    }
+
+    #[test]
+    fn parse_embedding_response_happy_path() {
+        let body = r#"{"data":[{"embedding":[0.1, 0.2, 0.3]}], "model":"qwen3-embedding-0.6b"}"#;
+        let v = parse_embedding_response(body).unwrap();
+        assert_eq!(v.len(), 3);
+        assert!((v[0] - 0.1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn parse_embedding_response_rejects_empty() {
+        let body = r#"{"data":[{"embedding":[]}]}"#;
+        assert!(parse_embedding_response(body).is_err());
+    }
+
+    #[test]
+    fn parse_embedding_response_rejects_no_data() {
+        let body = r#"{"foo":"bar"}"#;
+        assert!(parse_embedding_response(body).is_err());
+    }
+
+    #[test]
+    fn vec_distance_to_score_is_monotonic() {
+        let s0 = vec_distance_to_score(0.0);
+        let s1 = vec_distance_to_score(1.0);
+        let s2 = vec_distance_to_score(5.0);
+        assert!(s0 > s1);
+        assert!(s1 > s2);
+        assert!(s0 <= 1.0 && s2 > 0.0);
     }
 }

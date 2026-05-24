@@ -114,6 +114,40 @@ try {
     "  {0} {1:N2} GB (copy took {2:N1} s)" -f $modelInPe.Name, ($modelInPe.Length/1GB), $tElapsed.TotalSeconds
 
     Write-Host ""
+    Write-Host "=== [3.5/5] Copying RAG error-code db + Qwen3-Embedding (v3.0 W5-6 Phase 2, optional) ==="
+    # Both files are optional. If either is missing, the runtime degrades:
+    #   - Missing errordb.sqlite -> lookup_error_code falls back to its
+    #     hardcoded 24-entry table (Phase 1 behavior).
+    #   - Missing embedding GGUF -> llama-server starts without --embedding
+    #     and the RagClient sees has_embeddings=0 -> FTS5-only retrieval.
+    # Build the db with:
+    #   python C:\NeuroBoot\tools-dev\build-error-db.py --fixtures-only \
+    #          --embedding-url http://127.0.0.1:8080 -o C:\NeuroBoot\tools-dev\fixtures\errordb.sqlite
+    # Download the embedding model (~400 MB) to C:\NeuroBoot\models\ from hf-mirror.com.
+    $errorDbSrc       = 'C:\NeuroBoot\tools-dev\fixtures\errordb.sqlite'
+    $embeddingSrcPath = 'C:\NeuroBoot\models\Qwen3-Embedding-0.6B-Q8_0.gguf'
+    $peRag            = "$mount\NeuroBoot\rag"
+    $script:EmbeddingPresent = $false
+
+    if (Test-Path $errorDbSrc) {
+        New-Item -ItemType Directory -Path $peRag -Force | Out-Null
+        Copy-Item $errorDbSrc -Destination "$peRag\errordb.sqlite" -Force
+        $dbBytes = (Get-Item "$peRag\errordb.sqlite").Length
+        "  errordb.sqlite copied ({0:N1} MB) to {1}" -f ($dbBytes/1MB), $peRag
+    } else {
+        Write-Warning "  errordb.sqlite missing at $errorDbSrc -- lookup_error_code will use hardcoded table only"
+    }
+
+    if (Test-Path $embeddingSrcPath) {
+        Copy-Item $embeddingSrcPath -Destination $peModels -Force
+        $embBytes = (Get-Item (Join-Path $peModels (Split-Path -Leaf $embeddingSrcPath))).Length
+        "  Qwen3-Embedding GGUF copied ({0:N1} MB) to {1}" -f ($embBytes/1MB), $peModels
+        $script:EmbeddingPresent = $true
+    } else {
+        Write-Warning "  Qwen3-Embedding-0.6B-Q8_0.gguf missing at $embeddingSrcPath -- llama-server will start without --embedding and RAG vector search will be disabled (FTS5 still works)"
+    }
+
+    Write-Host ""
     Write-Host "=== [4/5] Writing X:\NeuroBoot\start-llama-server.cmd ==="
     $startLlama = "$peNeuroBoot\start-llama-server.cmd"
     # v2 Stage 1.5 optimizations:
@@ -133,9 +167,16 @@ try {
     # dir lives on X:\ ramdisk so it does not persist across PE reboots;
     # that's fine - within a single session is where the win is.
     # See https://github.com/ggml-org/llama.cpp/discussions/13606
-    $llamaCmd = @'
+    #
+    # v3.0 W5-6 Phase 2 (2026-05-24): if Qwen3-Embedding GGUF was bundled
+    # in [3.5/5], a second llama-server process gets launched on :8081
+    # serving the embedding model for RAG vector search. We launch two
+    # separate processes (rather than one with --embedding) because
+    # llama-server can host either pooling mode OR chat mode, not both
+    # simultaneously, and we need chat completions on :8080 to keep working.
+    $llamaChatCmd = @'
 @echo off
-REM Launches llama-server with the bundled Qwen3-4B GGUF on PE.
+REM Launches llama-server (chat model) with the bundled Qwen3-4B GGUF on PE.
 REM X: is the PE ramdisk drive letter.
 cd /d X:\NeuroBoot\llama-cpp
 if not exist X:\NeuroBoot\slots mkdir X:\NeuroBoot\slots
@@ -151,8 +192,35 @@ llama-server.exe ^
   --slot-save-path X:\NeuroBoot\slots ^
   --cache-reuse 256
 '@
-    [System.IO.File]::WriteAllText($startLlama, $llamaCmd, [System.Text.ASCIIEncoding]::new())
+    [System.IO.File]::WriteAllText($startLlama, $llamaChatCmd, [System.Text.ASCIIEncoding]::new())
     "  Written: $startLlama"
+
+    # v3.0 W5-6 Phase 2: only write the embed-server cmd if the GGUF was bundled.
+    if ($script:EmbeddingPresent) {
+        $startEmbed = "$peNeuroBoot\start-llama-embed.cmd"
+        $llamaEmbedCmd = @'
+@echo off
+REM v3.0 W5-6 Phase 2: launches llama-server (embedding model) on :8081
+REM serving Qwen3-Embedding-0.6B for RAG vector search. NeuroBoot's RagClient
+REM detects this endpoint via its with_embedder() config.
+cd /d X:\NeuroBoot\llama-cpp
+llama-server.exe ^
+  -m X:\NeuroBoot\models\Qwen3-Embedding-0.6B-Q8_0.gguf ^
+  -a qwen3-embedding-0.6b ^
+  --host 127.0.0.1 ^
+  --port 8081 ^
+  --embedding ^
+  --pooling last ^
+  -c 8192 ^
+  -ngl 0 ^
+  -t 2 ^
+  --no-mmap
+'@
+        [System.IO.File]::WriteAllText($startEmbed, $llamaEmbedCmd, [System.Text.ASCIIEncoding]::new())
+        "  Written: $startEmbed"
+    } else {
+        "  Skipped embedding server cmd (no GGUF bundled)"
+    }
 
     Write-Host ""
     Write-Host "=== [5/5] Overwriting startnet.cmd (PE auto-launch NeuroBoot) ==="
@@ -160,21 +228,34 @@ llama-server.exe ^
     # v1.0.1: replace fixed `timeout /t 60` with PS healthcheck loop on /health.
     # HDD/NVMe + RAM speed differences make fixed wait unreliable; healthcheck
     # exits as soon as llama-server's HTTP /health returns 200 (or after 180s timeout).
-    $startnetCmd = @'
+    # v3.0 W5-6 Phase 2: when the embedding model is bundled we also launch
+    # a second llama-server process on :8081. We don't health-check :8081 --
+    # it's optional for RAG vector search (fallback is FTS5), so don't block
+    # GUI launch on it.
+    if ($script:EmbeddingPresent) {
+        $startEmbedLine = 'start "llama-embed" /MIN cmd /c "X:\NeuroBoot\start-llama-embed.cmd"'
+    } else {
+        $startEmbedLine = 'REM embedding server skipped (no Qwen3-Embedding GGUF bundled)'
+    }
+
+    $startnetCmd = @"
 @echo off
 REM NeuroBoot PE startnet.cmd - auto-launch on PE boot.
-REM Flow: wpeinit -> spawn llama-server in background -> poll /health until
-REM ready (max 180s) -> launch NeuroBoot GUI.
+REM Flow: wpeinit -> spawn llama-server (+optional embed-server) in background ->
+REM poll /health until ready (max 180s) -> launch NeuroBoot GUI.
 
 wpeinit
 
-REM Start llama-server in a minimized background cmd window
+REM Start chat-model llama-server in a minimized background cmd window
 start "llama-server" /MIN cmd /c "X:\NeuroBoot\start-llama-server.cmd"
+
+REM v3.0 W5-6 Phase 2: also start embedding-model llama-server on :8081 if bundled
+$startEmbedLine
 
 REM Wait for llama-server /health to return 200 (or 180s timeout).
 REM PowerShell is provided by WinPE-PowerShell OC (see 03-mount-and-customize.ps1).
 echo Waiting for llama-server to be ready (polling /health, max 180s)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(180); while ((Get-Date) -lt $deadline) { try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8080/health' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop; if ($r.StatusCode -eq 200) { Write-Host '[OK] llama-server ready'; exit 0 } } catch {} ; Start-Sleep -Seconds 2 } ; Write-Host '[WARN] llama-server not ready after 180s (will launch GUI anyway, use the gear icon to configure remote endpoint)'; exit 1"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$deadline=(Get-Date).AddSeconds(180); while ((Get-Date) -lt `$deadline) { try { `$r = Invoke-WebRequest -Uri 'http://127.0.0.1:8080/health' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop; if (`$r.StatusCode -eq 200) { Write-Host '[OK] llama-server ready'; exit 0 } } catch {} ; Start-Sleep -Seconds 2 } ; Write-Host '[WARN] llama-server not ready after 180s (will launch GUI anyway, use the gear icon to configure remote endpoint)'; exit 1"
 
 REM Launch NeuroBoot GUI (blocks startnet.cmd until user closes the window)
 cd /d X:\NeuroBoot
@@ -184,7 +265,7 @@ REM After NeuroBoot exits, drop back to PE cmd prompt
 echo.
 echo NeuroBoot closed. You are now in PE cmd shell.
 echo Type "wpeutil shutdown" to power off, or "wpeutil reboot" to restart.
-'@
+"@
     [System.IO.File]::WriteAllText($startnet, $startnetCmd, [System.Text.ASCIIEncoding]::new())
     "  Overwritten: $startnet"
 

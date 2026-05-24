@@ -38,9 +38,16 @@ egui_commonmark = { version = "0.23", default-features = false, features = ["pul
 # - `bundled` feature compiles SQLite from source into our binary -- no
 #   sqlite3.dll dependency, which matters for PE (might not ship sqlite).
 # - bundled SQLite is >=3.46 which has the FTS5 trigram tokenizer built in.
-# - Phase 2 will add `sqlite-vec = "0.1"` for vector search; not yet needed
-#   for the FTS5-only skeleton.
 rusqlite = { version = "0.32", features = ["bundled"] }
+
+# v3.0 W5-6 Phase 2: vector search extension over the same sqlite db.
+# - `cc` build.rs compiles sqlite-vec.c into a static lib (sqlite_vec0) --
+#   no runtime sqlite_vec0.dll dep, PE-friendly just like rusqlite bundled.
+# - Loaded once per process via rag::vec_ext::register_once() which calls
+#   rusqlite::ffi::sqlite3_auto_extension so every subsequent Connection::open
+#   has vec_version() / vec_distance() / vec0 virtual table available.
+# - 0.1.x is the official author's binding (asg017); 2026 stable.
+sqlite-vec = "0.1.9"
 
 [dev-dependencies]
 # 临时目录 —— v3.0 W6-7 memory 模块单测用（path traversal 校验 + 6 命令在隔离 tmp 跑）。
