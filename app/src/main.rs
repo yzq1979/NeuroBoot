@@ -28,7 +28,7 @@ use llm::endpoint::{detect_endpoints, DetectedEndpoints, EndpointConfig};
 use tools::ToolRegistry;
 use ui::{
     draw_power_confirmation_dialog, draw_settings_dialog, install_chinese_fonts, launch_cmd,
-    launch_file_manager, load_path_as_attached, pick_image_files, render_message,
+    launch_file_manager, load_path_as_attached, open_log_dir, pick_image_files, render_message,
     scan_user_prompts, AttachedImage, ChatMessage, CommonMarkCache, PowerAction, SettingsAction,
     SettingsBuffer, StatusBarState, UserPrompt,
 };
@@ -191,6 +191,8 @@ struct NeuroBootApp {
     md_cache: CommonMarkCache,
     /// v2 Stage 2 取消标志：UI 点「停止生成」会 set 为 true，worker 检测后中断流式读
     cancel_flag: Arc<AtomicBool>,
+    /// v2 Stage 4.3 只读模式：true 时 dangerous 工具完全没注册；顶栏显示徽章警示
+    readonly_mode: bool,
 }
 
 impl Default for NeuroBootApp {
@@ -203,14 +205,20 @@ impl Default for NeuroBootApp {
             probe_hint,
         } = detect_endpoints(DEFAULT_ENDPOINT, DEFAULT_MODEL);
 
-        // 注册工具：v1 baseline (3 safe + 1 dangerous) + v2 P0 (8 safe)
+        // v2 Stage 4.3: 检测 --readonly CLI flag（也支持 env NEUROBOOT_READONLY=1）
+        let readonly_mode = std::env::args().any(|a| a == "--readonly")
+            || std::env::var("NEUROBOOT_READONLY")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+        // 注册工具：v1 baseline + v2 Stage A safe + v2 Stage 4 dangerous
+        // 只读模式：跳过所有 dangerous 工具的注册 —— 模型层就没法看到它们
         let mut registry = ToolRegistry::new();
-        // v1 baseline
+        // v1 baseline (safe)
         registry.register(Box::new(tools::safe::list_disks::ListDisks));
         registry.register(Box::new(tools::safe::read_system_info::ReadSystemInfo));
         registry.register(Box::new(tools::safe::read_event_log_errors::ReadEventLogErrors));
-        registry.register(Box::new(tools::dangerous::delete_path::DeletePath));
-        // v2 P0 新增 safe 工具
+        // v2 Stage A 新增 safe 工具
         registry.register(Box::new(tools::safe::list_partitions::ListPartitions));
         registry.register(Box::new(tools::safe::list_volumes::ListVolumes));
         registry.register(Box::new(tools::safe::read_ip_config::ReadIpConfig));
@@ -219,6 +227,23 @@ impl Default for NeuroBootApp {
         registry.register(Box::new(tools::safe::list_services::ListServices));
         registry.register(Box::new(tools::safe::list_minidumps::ListMinidumps));
         registry.register(Box::new(tools::safe::list_recent_shutdowns::ListRecentShutdowns));
+        // dangerous 工具：只读模式下完全不注册
+        if !readonly_mode {
+            // v1 dangerous
+            registry.register(Box::new(tools::dangerous::delete_path::DeletePath));
+            // v2 Stage 4.1 新增 dangerous 工具
+            registry.register(Box::new(tools::dangerous::run_chkdsk::RunChkdsk));
+            registry.register(Box::new(tools::dangerous::run_sfc::RunSfcScannow));
+            registry.register(Box::new(
+                tools::dangerous::run_dism_restorehealth::RunDismRestoreHealth,
+            ));
+            registry.register(Box::new(
+                tools::dangerous::defender_offline_scan::DefenderOfflineScan,
+            ));
+            registry.register(Box::new(
+                tools::dangerous::bootrec_rebuild_bcd::BootrecRebuildBcd,
+            ));
+        }
 
         let user_prompts = scan_user_prompts();
         let prompts_hint = if user_prompts.is_empty() {
@@ -271,6 +296,7 @@ impl Default for NeuroBootApp {
             attached_images: Vec::new(),
             md_cache: CommonMarkCache::default(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            readonly_mode,
         }
     }
 }
@@ -394,6 +420,12 @@ impl eframe::App for NeuroBootApp {
                 ui.weak("·");
                 ui.label(format!("{} ({})", self.active.label, self.active.endpoint));
                 ui.weak(format!("· {} 个工具", self.tool_registry.len()));
+                if self.readonly_mode {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(120, 200, 120),
+                        "· 🔒 只读模式",
+                    );
+                }
                 if let Some(alt) = &self.inactive {
                     if !busy {
                         if ui.small_button(format!("切到{}", alt.label)).clicked() {
@@ -468,6 +500,20 @@ impl eframe::App for NeuroBootApp {
                             Err(e) => self
                                 .messages
                                 .push(ChatMessage::assistant(format!("（启动失败）{e}"))),
+                        }
+                    }
+                    if ui
+                        .small_button("日志")
+                        .on_hover_text("查看工具执行审计日志（X:\\NeuroBoot\\logs\\）")
+                        .clicked()
+                    {
+                        match open_log_dir() {
+                            Ok(r) => self
+                                .messages
+                                .push(ChatMessage::assistant(format!("（日志）{}", r.note))),
+                            Err(e) => self
+                                .messages
+                                .push(ChatMessage::assistant(format!("（日志打不开）{e}"))),
                         }
                     }
                 });

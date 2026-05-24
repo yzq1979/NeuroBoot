@@ -9,6 +9,7 @@
 
 pub mod audit_log;
 pub mod dangerous;
+pub mod preflight;
 pub mod ps_helper;
 pub mod registry;
 pub mod safe;
