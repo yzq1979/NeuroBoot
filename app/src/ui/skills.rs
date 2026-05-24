@@ -371,4 +371,64 @@ more body
         assert_eq!(body.description, "A legacy skill");
         assert!(body.body.contains("Body line 1"));
     }
+
+    // v3.0 W2-3：验证仓库里的 distributed skill 模板全部能 parse + 元数据完整。
+    // 测试时 cwd 是 cargo workspace root（即 app/），通过 ../ 到 docs/usb-templates/skills。
+    #[test]
+    fn distributed_skill_templates_all_parse() {
+        let skills_dir = std::path::Path::new("../docs/usb-templates/skills");
+        if !skills_dir.exists() {
+            // 测试可能在不同工作目录跑（IDE / CI），找不到就跳
+            eprintln!(
+                "skip: skills dir not at {} (cwd={:?})",
+                skills_dir.display(),
+                std::env::current_dir().ok()
+            );
+            return;
+        }
+        let entries = std::fs::read_dir(skills_dir).expect("read skills dir");
+        let mut found = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+            let parsed = parse_skill(&content, path.clone());
+            assert!(
+                parsed.is_some(),
+                "skill file {} failed to parse",
+                path.display()
+            );
+            let skill = parsed.unwrap();
+            assert!(
+                skill.name.starts_with('/'),
+                "{}: name '{}' must start with /",
+                path.display(),
+                skill.name
+            );
+            assert!(
+                !skill.description.is_empty(),
+                "{}: description must not be empty (W2-3 convention)",
+                path.display()
+            );
+            // body 至少 100 字符 —— 防 skill 内容退化为空壳
+            assert!(
+                skill.body.chars().count() >= 100,
+                "{}: body too short ({} chars) - real skill should have substantive content",
+                path.display(),
+                skill.body.chars().count()
+            );
+            found.push(skill.name);
+        }
+        // v3.0 W2-3 完成后预期至少 8 个 skill 模板
+        assert!(
+            found.len() >= 5,
+            "expected >= 5 distributed skill templates, got {}: {:?}",
+            found.len(),
+            found
+        );
+        eprintln!("[OK] {} skill templates parsed: {:?}", found.len(), found);
+    }
 }

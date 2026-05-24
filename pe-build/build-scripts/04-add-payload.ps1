@@ -85,6 +85,26 @@ try {
     }
 
     Write-Host ""
+    Write-Host "=== [2.7/5] Copying skill templates (v3.0 W2-3) ==="
+    # 8 个 distributed skill 模板（YAML frontmatter + body）拷到 PE 的 \NeuroBoot\skills\。
+    # AI 启动时 scan_skills() 扫这个目录加载 SkillSummary 进 system prompt（progressive
+    # disclosure tier 1）；AI 调 load_skill(name) 触发 lazy load body（tier 2）。
+    # 用户 U 盘根 \NeuroBoot\skills\*.md 也会被扫，可覆盖 / 扩展（详见 docs/usb-templates/skills/README）。
+    $skillsSrc = 'C:\NeuroBoot\docs\usb-templates\skills'
+    $peSkills = "$mount\NeuroBoot\skills"
+    if (Test-Path $skillsSrc) {
+        New-Item -ItemType Directory -Path $peSkills -Force | Out-Null
+        $copied = 0
+        foreach ($f in Get-ChildItem $skillsSrc -Filter '*.md' -File) {
+            Copy-Item $f.FullName -Destination $peSkills -Force
+            $copied++
+        }
+        "  Copied $copied skill template(s) to $peSkills"
+    } else {
+        "  Skipped - no $skillsSrc dir (skill templates missing from source tree)"
+    }
+
+    Write-Host ""
     Write-Host "=== [3/5] Copying Qwen3-4B GGUF model (2.4 GB, slow) ==="
     New-Item -ItemType Directory -Path $peModels -Force | Out-Null
     $tStart = Get-Date
