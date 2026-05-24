@@ -41,6 +41,11 @@ impl Tool for ListRecentShutdowns {
          - `41`:   Kernel-Power = **异常重启 / 突然断电**（**最严重**，可能硬件问题）\n\
          - `1074`: USER32 关机原因 = **某用户或进程触发的关机**（含 Windows Update 重启）\n\
          \n\
+         **Example output**: `[{\"Time\":\"2026-05-24 08:00:01\",\"Id\":6005,\"Source\":\"EventLog\",\
+         \"Description\":\"系统启动\",\"Message\":\"事件日志服务已启动。\"},\
+         {\"Time\":\"2026-05-23 23:45:12\",\"Id\":41,\"Source\":\"Microsoft-Windows-Kernel-Power\",\
+         \"Description\":\"Kernel-Power 异常重启\",\"Message\":\"系统已重新启动，但未先正常关闭...\"}]`\n\
+         \n\
          **Notes**: 关机时序通常是 `6006 → 6005`（干净）或直接 `6008 → 6005`（异常）。\
          **6008 + 41 在同一时间点出现 = 几乎肯定是蓝屏自动重启**，下一步去 list_minidumps 找 dump。"
     }
@@ -79,5 +84,16 @@ ConvertTo-Json @($events) -Depth 3 -Compress"#
         );
 
         run_ps_json_array(&script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListRecentShutdowns);
     }
 }

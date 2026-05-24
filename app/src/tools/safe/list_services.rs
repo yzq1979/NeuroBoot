@@ -32,6 +32,11 @@ impl Tool for ListServices {
          - `Status`: Running / Stopped / StartPending / StopPending / Paused\n\
          - `StartType`: Automatic / Manual / Disabled / Boot / System（**Disabled = 被人故意禁的，可疑**）\n\
          \n\
+         **Example output**: `[{\"Name\":\"Spooler\",\"DisplayName\":\"Print Spooler\",\
+         \"Status\":\"Running\",\"StartType\":\"Automatic\"},{\"Name\":\"WinDefend\",\
+         \"DisplayName\":\"Microsoft Defender Antivirus Service\",\"Status\":\"Running\",\
+         \"StartType\":\"Automatic\"}]`\n\
+         \n\
          **Notes**: 默认只列 Running 节省 token；查「为啥某功能没用」用 status='Stopped' 看挂的；\
          全面审计用 status='all'。**重要**：PE 里大量主系统服务不会启动，**不要拿 PE 的服务状态推断主系统状态**。"
     }
@@ -71,5 +76,16 @@ ConvertTo-Json @(Get-Service -ErrorAction SilentlyContinue {filter} | Select-Obj
         );
 
         run_ps_json_array(&script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListServices);
     }
 }

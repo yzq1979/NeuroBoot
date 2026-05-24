@@ -33,6 +33,13 @@ impl Tool for ListNetworkAdapters {
          - `MediaType`: 802.3 / Native802.11 / Wireless80211 / 等\n\
          - `DriverVersion`: 驱动版本号（驱动新旧对比用）\n\
          \n\
+         **Example output**: `[{\"Name\":\"WLAN\",\"Status\":\"Up\",\"MacAddress\":\"A1-B2-C3-D4-E5-F6\",\
+         \"LinkSpeed\":\"866.7 Mbps\",\"InterfaceDescription\":\"Intel Wi-Fi 6E AX211\",\
+         \"MediaType\":\"Native 802.11\",\"DriverVersion\":\"23.40.0.10\"},\
+         {\"Name\":\"以太网\",\"Status\":\"Disconnected\",\"MacAddress\":\"00-11-22-33-44-55\",\
+         \"LinkSpeed\":\"0 bps\",\"InterfaceDescription\":\"Realtek PCIe GbE Family Controller\",\
+         \"MediaType\":\"802.3\",\"DriverVersion\":\"10.65.0719.2024\"}]`\n\
+         \n\
          **Notes**: 含 `-IncludeHidden`，会看到 VPN / WSL2 / Hyper-V 虚拟网卡。\
          跟 read_ip_config 互补：本工具看「硬件状态」，read_ip_config 看「TCP/IP 配置」。"
     }
@@ -54,5 +61,16 @@ impl Tool for ListNetworkAdapters {
 ConvertTo-Json @(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Select-Object Name, @{N='Status';E={$_.Status.ToString()}}, MacAddress, LinkSpeed, InterfaceDescription, @{N='MediaType';E={$_.MediaType.ToString()}}, DriverVersion) -Depth 3 -Compress"#;
 
         run_ps_json_array(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListNetworkAdapters);
     }
 }

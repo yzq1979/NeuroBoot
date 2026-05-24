@@ -35,6 +35,10 @@ impl Tool for ListProcessesTop {
          - `StartTime`: HH:mm:ss 或 '?'（系统进程读不到）\n\
          - `Path`: exe 完整路径（'?'  = 权限不够；**关键安全信号**：路径在 %TEMP% / %APPDATA% / 用户目录的奇怪进程可能是恶意软件）\n\
          \n\
+         **Example output**: `[{\"PID\":1234,\"Name\":\"chrome\",\"CPU\":3621.5,\"MemoryMB\":1245.8,\
+         \"StartTime\":\"09:15:32\",\"Path\":\"C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\"},\
+         {\"PID\":4,\"Name\":\"System\",\"CPU\":892.1,\"MemoryMB\":24.3,\"StartTime\":\"?\",\"Path\":null}]`\n\
+         \n\
          **Notes**: CPU 字段是累计值不是瞬时 —— 长时间运行的进程（如 svchost）天生 CPU 累计大，**不一定有问题**。\
          真要看瞬时 CPU% 等未来加专门工具。"
     }
@@ -83,5 +87,16 @@ ConvertTo-Json @(Get-Process -ErrorAction SilentlyContinue | Sort-Object {sort_f
         );
 
         run_ps_json_array(&script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListProcessesTop);
     }
 }

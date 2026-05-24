@@ -32,8 +32,13 @@ impl Tool for ListMinidumps {
          - `SizeMB`: 文件大小（minidump 通常 0.1~1 MB；MEMORY.DMP 是全量内存 dump 通常几个 GB）\n\
          - `LastWriteTime`: 崩溃时间 yyyy-MM-dd HH:mm:ss\n\
          \n\
+         **Example output**: `[{\"Path\":\"C:\\\\Windows\\\\Minidump\\\\052426-12345-01.dmp\",\
+         \"SizeMB\":0.3,\"LastWriteTime\":\"2026-05-24 14:32:11\"},\
+         {\"Path\":\"C:\\\\Windows\\\\MEMORY.DMP\",\"SizeMB\":1024.0,\
+         \"LastWriteTime\":\"2026-05-23 09:15:48\"}]`\n\
+         \n\
          **Notes**: 空数组的可能原因：① 没崩过 ② 已被清理（CCleaner 之类）③ 系统设了不写 minidump（控制面板「启动和故障恢复」）。\
-         本工具只**列出 dump 文件**，**不分析内容**；要解码某个 dump 的 driver / bug check code 需 BlueScreenView（v2 Stage 6+ 打包）。\n\
+         本工具只**列出 dump 文件**，**不分析内容**；要解码某个 dump 的 driver / bug check code 需 analyze_minidump（W7 配套）。\n\
          **重要**：dump 文件是关键诊断证据，**绝不要建议用户删除**，除非确认不再需要排查。"
     }
 
@@ -57,5 +62,16 @@ if (Test-Path 'C:\Windows\MEMORY.DMP') { $dumps += Get-Item 'C:\Windows\MEMORY.D
 ConvertTo-Json @($dumps | Sort-Object LastWriteTime -Descending | Select-Object @{N='Path';E={$_.FullName}}, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}, @{N='LastWriteTime';E={$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')}}) -Depth 3 -Compress"#;
 
         run_ps_json_array(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&ListMinidumps);
     }
 }
