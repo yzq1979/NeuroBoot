@@ -30,6 +30,16 @@ impl Tool for DefenderOfflineScan {
          \n\
          **Returns**: MpCmdRun.exe stdout（扫描进度 + 命中列表 + 处理动作）。\n\
          \n\
+         **Example output**（截选末尾）: ```\n\
+         Scan starting...\n\
+         Scan finished.\n\
+         Scanning C: [97%]\n\
+         Threat(s) found:  2\n\
+             Trojan:Win32/Spursint.F!cl\n\
+             PUA:Win32/Adload\n\
+         Detected threats were quarantined.\n\
+         ```\n\
+         \n\
          **Notes**: 全盘扫耗时几十分钟到几小时；扫到威胁会自动隔离（默认行为）；\
          若 `MpCmdRun.exe` 不在 PATH（PE 里 Defender 没启用时），会返回 NotFound 错误；\
          注意 Defender 签名库可能不是最新（PE 没自动更新），可先调 `defender_update_signatures`（v2.x 加）。"
@@ -68,5 +78,16 @@ if ($null -eq $mpCmd) { throw 'MpCmdRun.exe not found' }
                 e
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&DefenderOfflineScan);
     }
 }

@@ -27,6 +27,12 @@ impl Tool for RunDismRestoreHealth {
          \n\
          **Returns**: DISM stdout（进度百分比 + 最终成功/失败）。\n\
          \n\
+         **Example output**（截选末尾）: ```\n\
+         [==========================100.0%==========================]\n\
+         The restore operation completed successfully.\n\
+         The operation completed successfully.\n\
+         ```\n\
+         \n\
          **Notes**: 默认从 Windows Update 拉，**需要联网**；联网失败可以指定 `/Source:wim:<wim_path>:1` 走本地，但本工具走默认；\
          耗时 10~60 分钟（看网速）；跑完一般应再跑一次 sfc /scannow 确认。"
     }
@@ -47,5 +53,16 @@ impl Tool for RunDismRestoreHealth {
         let script = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 DISM.exe /Online /Cleanup-Image /RestoreHealth"#;
         run_ps(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&RunDismRestoreHealth);
     }
 }

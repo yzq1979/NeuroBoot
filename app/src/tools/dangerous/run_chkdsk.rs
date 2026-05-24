@@ -28,6 +28,16 @@ impl Tool for RunChkdsk {
          \n\
          **Returns**: chkdsk 完整 stdout（多行进度 + 最终统计）。\n\
          \n\
+         **Example output**（截选末尾统计）: ```\n\
+         Windows has scanned the file system and found no problems.\n\
+         No further action is required.\n\
+         \n\
+           976559615 KB total disk space.\n\
+           742891024 KB in 287456 files.\n\
+                4096 KB in 23478 indexes.\n\
+                   0 KB in bad sectors.\n\
+         ```\n\
+         \n\
          **Notes**: 跑 C: 会触发「下次启动时扫描」（无法在线修复系统盘）；用户需手动重启确认；\
          其它盘可能要求当时未被独占使用（关掉占用程序后重试）；过程不可中断 —— **跑大盘可能数小时**。"
     }
@@ -70,5 +80,16 @@ impl Tool for RunChkdsk {
 chkdsk {drive_upper}: /f /r"#
         );
         run_ps(&script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&RunChkdsk);
     }
 }

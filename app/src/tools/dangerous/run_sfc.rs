@@ -28,6 +28,12 @@ impl Tool for RunSfcScannow {
          **Returns**: sfc 完整 stdout，结尾会告诉用户「没发现完整性损坏」/「修复了 X 个」/\
          「发现损坏但无法修复（要跑 dism）」。\n\
          \n\
+         **Example output**（3 种典型结尾）: ```\n\
+         成功: Windows Resource Protection did not find any integrity violations.\n\
+         成功: Windows Resource Protection found corrupt files and successfully repaired them.\n\
+         失败: Windows Resource Protection found corrupt files but was unable to fix some of them.\n\
+         ```\n\
+         \n\
          **Notes**: 耗时 10~30 分钟（取决于盘 IO）；如果它报修复失败，下一步调 `run_dism_restorehealth`；\
          比 chkdsk 安全得多（只动 WinSxS 缓存里有的文件，不动用户数据）。"
     }
@@ -48,5 +54,16 @@ impl Tool for RunSfcScannow {
         let script = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 sfc /scannow"#;
         run_ps(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::registry::assert_v30_description_convention;
+
+    #[test]
+    fn meets_v30_convention() {
+        assert_v30_description_convention(&RunSfcScannow);
     }
 }
