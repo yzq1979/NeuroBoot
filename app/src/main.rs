@@ -15,6 +15,7 @@ mod llm;
 mod tools;
 mod ui;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -188,6 +189,8 @@ struct NeuroBootApp {
     attached_images: Vec<AttachedImage>,
     /// Markdown 渲染缓存（避免每帧重 parse Assistant 消息）
     md_cache: CommonMarkCache,
+    /// v2 Stage 2 取消标志：UI 点「停止生成」会 set 为 true，worker 检测后中断流式读
+    cancel_flag: Arc<AtomicBool>,
 }
 
 impl Default for NeuroBootApp {
@@ -267,6 +270,7 @@ impl Default for NeuroBootApp {
             },
             attached_images: Vec::new(),
             md_cache: CommonMarkCache::default(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -648,9 +652,17 @@ impl NeuroBootApp {
                         .desired_rows(3),
                 );
 
-                let btn_label = if busy { "发送中" } else { "发送" };
-                if ui
-                    .add_sized([80.0, 64.0], egui::Button::new(btn_label))
+                if busy {
+                    // v2 Stage 2: busy 时按钮变「停止生成」，点击 set cancel flag
+                    if ui
+                        .add_sized([80.0, 64.0], egui::Button::new("停止生成"))
+                        .on_hover_text("中断本次流式生成（worker 会清理后退出）")
+                        .clicked()
+                    {
+                        self.cancel_flag.store(true, Ordering::Relaxed);
+                    }
+                } else if ui
+                    .add_sized([80.0, 64.0], egui::Button::new("发送"))
                     .clicked()
                 {
                     should_send = true;
@@ -682,6 +694,9 @@ impl NeuroBootApp {
         self.messages.push(ChatMessage::user_with_images(text, images));
         self.input_buffer.clear();
 
+        // 新一轮 agent 任务前重置 cancel 标志
+        self.cancel_flag.store(false, Ordering::Relaxed);
+
         let job = AgentJob {
             endpoint: self.active.endpoint.clone(),
             model: self.active.model.clone(),
@@ -689,6 +704,7 @@ impl NeuroBootApp {
             system_prompt: self.system_prompt.clone(),
             messages: self.messages.clone(),
             tool_registry: Arc::clone(&self.tool_registry),
+            cancel: Arc::clone(&self.cancel_flag),
         };
         self.pending_response = Some(spawn_agent_request(job));
     }
@@ -699,17 +715,43 @@ impl NeuroBootApp {
         };
         loop {
             match rx.try_recv() {
+                Ok(AgentEvent::AssistantStart) => {
+                    // 流式 assistant 消息开始：推一个空 assistant 容器
+                    self.messages.push(ChatMessage::assistant(String::new()));
+                }
+                Ok(AgentEvent::TokenChunk(chunk)) => {
+                    // 追加到最后一条 assistant message（应该是 AssistantStart 推的那个）
+                    if let Some(last) = self.messages.last_mut() {
+                        if last.role == ui::chat::Role::Assistant {
+                            last.content.push_str(&chunk);
+                        } else {
+                            // 防御：没拿到 AssistantStart 就来了 chunk —— 临时新建一个
+                            self.messages.push(ChatMessage::assistant(chunk));
+                        }
+                    } else {
+                        self.messages.push(ChatMessage::assistant(chunk));
+                    }
+                }
+                Ok(AgentEvent::AssistantToolCalls(summaries)) => {
+                    if let Some(last) = self.messages.last_mut() {
+                        if last.role == ui::chat::Role::Assistant {
+                            last.tool_calls = summaries;
+                        }
+                    }
+                }
                 Ok(AgentEvent::Message(msg)) => {
                     self.messages.push(msg);
                 }
                 Ok(AgentEvent::Done) => {
                     self.pending_response = None;
+                    self.cancel_flag.store(false, Ordering::Relaxed);
                     return;
                 }
                 Ok(AgentEvent::Error(message)) => {
                     self.messages
                         .push(ChatMessage::assistant(format!("（出错）{message}")));
                     self.pending_response = None;
+                    self.cancel_flag.store(false, Ordering::Relaxed);
                     return;
                 }
                 Ok(AgentEvent::Confirmation(req)) => {
@@ -724,6 +766,7 @@ impl NeuroBootApp {
                     self.messages
                         .push(ChatMessage::assistant("（出错）后台 Agent 线程意外断开"));
                     self.pending_response = None;
+                    self.cancel_flag.store(false, Ordering::Relaxed);
                     return;
                 }
             }

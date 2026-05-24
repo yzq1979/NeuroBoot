@@ -240,11 +240,114 @@ impl ToolCall {
 }
 
 /// `tool_calls[].function` 子对象 —— 模型生成的函数名与参数。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `arguments` 兼容两种 wire 形态：
+/// - **OpenAI 规范**：字符串（内含 JSON 序列化）
+/// - **llama.cpp build 8233+ `--jinja` 模式**：JSON object 直接出（见 [issue #20198](https://github.com/ggml-org/llama.cpp/issues/20198)，会把 OpenAI Python SDK ≥2.21 直接搞崩 TypeError）
+///
+/// 自定义 Deserialize 双形态都吃：object 时 to_string 拍平成字符串，保证后续解析统一。
+#[derive(Debug, Clone, Serialize)]
 pub struct ToolCallFunction {
     pub name: String,
-    /// JSON 字符串（模型生成的实参 JSON 序列化）
+    /// JSON 字符串（模型生成的实参 JSON 序列化）。无论 wire 是 string 还是 object，
+    /// 反序列化后这里**永远是 string**（object 形态被 to_string 拍平）。
     pub arguments: String,
+}
+
+impl<'de> Deserialize<'de> for ToolCallFunction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            name: String,
+            arguments: serde_json::Value,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let arguments = match raw.arguments {
+            // OpenAI 规范：string，直接用
+            serde_json::Value::String(s) => s,
+            // llama.cpp build 8233+：object，stringify
+            other => serde_json::to_string(&other).map_err(serde::de::Error::custom)?,
+        };
+        Ok(ToolCallFunction {
+            name: raw.name,
+            arguments,
+        })
+    }
+}
+
+// ============================================================================
+// Streaming SSE 数据结构（v2 Stage 2）
+// ============================================================================
+
+/// SSE 流的一个 chunk（OpenAI 风格 `data: {...}\n\n`）。
+///
+/// SSE event 格式（来源：OpenAI streaming API + llama.cpp 兼容）：
+/// ```text
+/// data: {"choices":[{"index":0,"delta":{"content":"hel"},"finish_reason":null}]}
+///
+/// data: {"choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}
+///
+/// data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+///
+/// data: [DONE]
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatCompletionStreamChunk {
+    pub choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamChoice {
+    pub index: u32,
+    #[serde(default)]
+    pub delta: StreamDelta,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
+}
+
+/// 单 chunk 的增量内容。
+///
+/// **重要**：
+/// - `content` 第一次有值，后续 chunk 持续累加
+/// - `role` 通常只在第一个 chunk 出现
+/// - `tool_calls[]` 元素按 `index` 累积；第一次出现某 index 时含 `id` + `function.name`，
+///   后续 chunk 同 index 只含 `function.arguments` 的增量
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StreamDelta {
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+/// 单 tool_call 在某 chunk 的增量。
+///
+/// 按 `index` 跨 chunk 累积；第一个 chunk 有 `id` 和 `function.name`，
+/// 后续 chunk 只有 `function.arguments` 字符串增量需要拼接。
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamToolCallDelta {
+    pub index: u32,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub function: Option<StreamFunctionDelta>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StreamFunctionDelta {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// arguments 增量字符串。llama.cpp 兼容性见 ToolCallFunction 的 doc。
+    /// 流式中通常是 string 增量；偶尔遇 object 时由 worker 端 handle。
+    #[serde(default)]
+    pub arguments: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
