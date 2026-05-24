@@ -22,6 +22,6 @@ pub use log_viewer::open_log_dir;
 pub use power_actions::{draw_power_confirmation_dialog, PowerAction};
 pub use prompts_file::{scan_user_prompts, UserPrompt};
 pub use settings_dialog::{draw_settings_dialog, SettingsAction, SettingsBuffer};
-pub use skills::{load_skill_body, scan_skills, SkillBody, SkillSummary};
+pub use skills::{load_skill_body, scan_skills, SkillSummary};
 pub use status_bar::StatusBarState;
 pub use system_launchers::{launch_cmd, launch_file_manager};

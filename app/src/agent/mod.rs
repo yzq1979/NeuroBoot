@@ -73,6 +73,9 @@ pub enum AgentEvent {
     /// Agent 想调 dangerous 工具 —— UI 必须弹窗让用户决定，
     /// 通过 responder 把决定送回 worker（worker 阻塞等待）
     Confirmation(ConfirmationRequest),
+    /// v3.0 W3-4: Agent 调了 propose_plan 工具 —— UI 渲染 plan 让用户审批，
+    /// 决定通过 responder 回传。批准 / 拒绝映射到合成 tool result 回灌 LLM
+    PlanProposal(PlanProposalRequest),
 }
 
 /// 危险工具调用前的确认请求。
@@ -96,6 +99,45 @@ pub enum ConfirmationResponse {
     /// 同意执行
     Confirm,
     /// 拒绝执行（worker 会把"用户拒绝"作为 tool 结果回传给 LLM）
+    Reject,
+}
+
+/// v3.0 W3-4: Plan Mode 单个步骤的简化视图（从 propose_plan 的 args 解析）。
+///
+/// 与 propose_plan tool 的 parameters_schema 中 steps[] 元素对齐。
+#[derive(Debug, Clone)]
+pub struct PlanStep {
+    pub tool: String,
+    pub args_preview: String,
+    pub why: String,
+    /// "safe" / "dangerous"（可选；空 = 未标）
+    pub safety: String,
+}
+
+/// v3.0 W3-4: propose_plan 工具触发的 plan 审批请求。
+///
+/// UI 收到后：
+/// 1. 存进 NeuroBootApp.pending_plan
+/// 2. 渲染 plan modal Window 显示 summary + steps（dangerous 步骤红字）
+/// 3. 用户点 Approve / Reject → responder send
+/// 4. Worker 的 resp_rx.recv() unblock → 合成 tool result 回灌 LLM
+pub struct PlanProposalRequest {
+    /// AI 给出的整体计划描述
+    pub summary: String,
+    /// 步骤清单（已从 args 的 steps[] 解析过；无效条目跳过）
+    pub steps: Vec<PlanStep>,
+    /// 原始 propose_plan 工具的 tool_call.id —— 合成 tool result 时回填
+    pub tool_call_id: String,
+    /// UI 把用户决定送回 worker 的发送端
+    pub responder: mpsc::Sender<PlanResponse>,
+}
+
+/// v3.0 W3-4: 用户对 plan 的回应。
+#[derive(Debug, Clone, Copy)]
+pub enum PlanResponse {
+    /// 批准：worker 合成 "（已批准）请按 steps 执行" 作为 tool result 回灌
+    Approve,
+    /// 拒绝：worker 合成 "（拒绝）请重新规划" 作为 tool result 回灌
     Reject,
 }
 
@@ -307,7 +349,91 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
             let exec_start = std::time::Instant::now();
             let exec_duration;
             let success;
-            let result_text = match job.tool_registry.get(tool_name) {
+
+            // v3.0 W3-4: 拦截 propose_plan 走 UI 双向 mpsc（参考 Dangerous 模式）
+            // 不调 tool.execute()（那个路径仅 MCP / fallback 用）；纯 GUI 路径在此处理。
+            let result_text = if tool_name == "propose_plan" {
+                safety_str = "plan_proposal";
+                // 解析 steps（兜底：解析失败回退到 fallback execute）
+                let steps_parsed: Vec<PlanStep> = args
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                let tool = v.get("tool").and_then(Value::as_str)?.to_owned();
+                                let why = v.get("why").and_then(Value::as_str)?.to_owned();
+                                let args_preview = v
+                                    .get("args_preview")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned();
+                                let safety = v
+                                    .get("safety")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some(PlanStep {
+                                    tool,
+                                    args_preview,
+                                    why,
+                                    safety,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let summary = args
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or("(无 summary)")
+                    .to_owned();
+
+                if steps_parsed.is_empty() {
+                    exec_duration = exec_start.elapsed();
+                    success = false;
+                    "（错误）propose_plan steps 解析为空 —— 请用 propose_plan 的正确 schema：\
+                     {summary: string, steps: [{tool, why, args_preview?, safety?}]}"
+                        .to_owned()
+                } else {
+                    let (resp_tx, resp_rx) = mpsc::channel::<PlanResponse>();
+                    let req = PlanProposalRequest {
+                        summary,
+                        steps: steps_parsed,
+                        tool_call_id: tc.id.clone(),
+                        responder: resp_tx,
+                    };
+                    if tx.send(AgentEvent::PlanProposal(req)).is_err() {
+                        return;
+                    }
+                    // 阻塞等用户决定（与 ConfirmationRequest 同模式）
+                    match resp_rx.recv() {
+                        Ok(PlanResponse::Approve) => {
+                            user_confirmed = Some(true);
+                            exec_duration = std::time::Duration::ZERO;
+                            success = true;
+                            "（用户已批准 plan）请按 steps 依次执行实际工具调用。\
+                             完成所有步骤后给中文总结报告。不要再次调 propose_plan。"
+                                .to_owned()
+                        }
+                        Ok(PlanResponse::Reject) => {
+                            user_confirmed = Some(false);
+                            exec_duration = std::time::Duration::ZERO;
+                            success = false;
+                            "（用户拒绝了 plan）请重新规划或问用户为什么拒绝。\
+                             常见原因：某步多余 / 顺序不对 / 缺关键步骤 / 用户改主意。\
+                             **不要原样重提同一 plan**。"
+                                .to_owned()
+                        }
+                        Err(_) => {
+                            exec_duration = std::time::Duration::ZERO;
+                            success = false;
+                            "（错误）plan 审批通道意外关闭".to_owned()
+                        }
+                    }
+                }
+            } else {
+                match job.tool_registry.get(tool_name) {
                 None => {
                     exec_duration = exec_start.elapsed();
                     success = false;
@@ -371,6 +497,7 @@ fn run_agent_loop(job: AgentJob, tx: &mpsc::Sender<AgentEvent>) {
                         }
                     }
                 },
+                }
             };
 
             // v2 Stage 3.2：写审计日志（失败静默，不影响工具结果回传）

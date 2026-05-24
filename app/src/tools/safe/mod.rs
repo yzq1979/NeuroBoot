@@ -16,6 +16,7 @@ pub mod list_recent_shutdowns;
 pub mod list_services;
 pub mod list_volumes;
 pub mod load_skill;
+pub mod propose_plan;
 pub mod read_event_log_errors;
 pub mod read_ip_config;
 pub mod read_smart;

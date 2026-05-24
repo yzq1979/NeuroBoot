@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use agent::{
     spawn_agent_request, AgentEvent, AgentJob, ConfirmationRequest, ConfirmationResponse,
+    PlanProposalRequest, PlanResponse,
 };
 use eframe::egui;
 use llm::config_file::{is_vl_model, save_to_first_writable_drive, ConfigFile};
@@ -86,6 +87,25 @@ const DEFAULT_SYSTEM_PROMPT: &str = r##"# 身份
 - **整盘格式化绝不调**：哪怕用户说「帮我格式化整个 C 盘」，也要先反问「你确定吗？所有数据会丢失，是否想保留某个分区？」
 - **诊断阶段绝不调危险工具**：用户问「电脑慢」时，应该调只读工具（list_processes_top / list_services）找原因，**不要直接建议**调 chkdsk / sfc / dism 等修复工具
 - **dangerous 工具的参数要保守**：能用 readonly mode（如 `chkdsk /scan`）就不用写盘 mode（如 `chkdsk /f /r`）
+
+---
+
+# Plan Mode（v3.0 W3-4）
+
+复杂任务**先提计划再执行**，用 `propose_plan` 工具。触发条件（任一）：
+
+- 预计要调 **超过 2 个工具** 才能完成（如蓝屏诊断要 4+ 工具：list_minidumps + analyze_minidump + read_event_log_errors + read_recent_installs）
+- 计划里**任何一步用 dangerous 工具**（chkdsk / sfc / dism / bootrec / delete_path / 等）
+- 用户**显式说**「先告诉我你的计划」「先看一下你打算怎么做」
+- 已用 `load_skill` 拿到剧本 → 把剧本的 step 列表直接作为 plan 提交
+
+**不要 plan**：单工具回答（「我有几块硬盘」→ 直接 list_disks）；纯文字闲聊。
+
+**propose_plan 流程**：
+1. 调 `propose_plan(summary, steps=[{tool, args_preview, why, safety?}])` —— UI 弹窗给用户审
+2. 用户 **Approve** → tool 返回「已批准」→ 你按 steps 依次调实际工具，完成后给中文总结
+3. 用户 **Reject** → tool 返回「拒绝」→ **不要原样重提同一 plan**，重新思考或问用户为什么拒绝
+4. **批准后不要再次 propose_plan**，直接调实际工具
 
 ---
 
@@ -217,6 +237,8 @@ fn run_as_mcp_server() {
     registry.register(Box::new(tools::safe::analyze_minidump::AnalyzeMinidump));
     // v3.0 W1.5: Progressive disclosure tier 2 工具
     registry.register(Box::new(tools::safe::load_skill::LoadSkill));
+    // v3.0 W3-4: Plan Mode 入口（MCP 模式下 execute() 返 placeholder，不阻塞）
+    registry.register(Box::new(tools::safe::propose_plan::ProposePlan));
 
     mcp::run_mcp_server(Arc::new(registry));
     std::process::exit(0);
@@ -234,6 +256,8 @@ struct NeuroBootApp {
     inactive: Option<EndpointConfig>,
     /// 当 Agent 想调 dangerous 工具时，UI 把请求存这里 + 渲染弹窗等用户决定
     pending_confirmation: Option<ConfirmationRequest>,
+    /// v3.0 W3-4 Plan Mode：Agent 调 propose_plan 时存这里 + 渲染 plan modal
+    pending_plan: Option<PlanProposalRequest>,
     /// 当前内存里的 config（合并了 env var 和 config.json）—— 设置面板初始值来源
     effective_config: ConfigFile,
     /// U 盘 prompts.txt 解析出的候选问题（启动时一次扫描）
@@ -309,6 +333,8 @@ impl Default for NeuroBootApp {
         registry.register(Box::new(tools::safe::analyze_minidump::AnalyzeMinidump));
         // v3.0 W1.5: Progressive disclosure tier 2 工具
         registry.register(Box::new(tools::safe::load_skill::LoadSkill));
+        // v3.0 W3-4: Plan Mode 入口工具（Cline 风格）
+        registry.register(Box::new(tools::safe::propose_plan::ProposePlan));
         // dangerous 工具：只读模式下完全不注册
         if !readonly_mode {
             // v1 dangerous
@@ -372,6 +398,7 @@ impl Default for NeuroBootApp {
             active,
             inactive,
             pending_confirmation: None,
+            pending_plan: None,
             effective_config: effective,
             user_prompts,
             show_settings: false,
@@ -654,6 +681,8 @@ impl eframe::App for NeuroBootApp {
 
         // ----- 危险工具确认弹窗（floating modal） -----
         self.draw_confirmation_dialog(ui.ctx());
+        // ----- v3.0 W3-4: Plan Mode 审批弹窗 -----
+        self.draw_plan_dialog(ui.ctx());
 
         // ----- 设置面板（modal） -----
         if self.show_settings {
@@ -1009,6 +1038,11 @@ impl NeuroBootApp {
                     self.pending_confirmation = Some(req);
                     return;
                 }
+                Ok(AgentEvent::PlanProposal(req)) => {
+                    // v3.0 W3-4: 存起来 + 渲染时画 plan 审批弹窗；worker 阻塞等用户决定
+                    self.pending_plan = Some(req);
+                    return;
+                }
                 Err(mpsc::TryRecvError::Empty) => {
                     return;
                 }
@@ -1088,6 +1122,118 @@ impl NeuroBootApp {
 
         if let Some(response) = chosen {
             if let Some(pending) = self.pending_confirmation.take() {
+                let _ = pending.responder.send(response);
+            }
+        }
+    }
+
+    /// v3.0 W3-4: Plan Mode 审批弹窗。
+    ///
+    /// pending_plan Some 时显示居中 Window：summary + steps 列表（dangerous 步骤红色）+
+    /// Approve / Reject 两按钮。用户点击通过 responder 把决定送回 worker。
+    fn draw_plan_dialog(&mut self, ctx: &egui::Context) {
+        if self.pending_plan.is_none() {
+            return;
+        }
+        // Clone 出展示数据，避免 closure 借 self
+        let (summary, steps) = {
+            let p = self.pending_plan.as_ref().unwrap();
+            (p.summary.clone(), p.steps.clone())
+        };
+
+        let mut chosen: Option<PlanResponse> = None;
+        let has_dangerous = steps.iter().any(|s| s.safety == "dangerous");
+
+        // 含 dangerous 时用红边框 + 警告色；纯 safe 时用普通蓝色
+        let (stroke_color, bg, header_color, header_icon) = if has_dangerous {
+            (
+                egui::Color32::from_rgb(220, 60, 60),
+                egui::Color32::from_rgb(50, 30, 30),
+                egui::Color32::from_rgb(255, 220, 100),
+                "⚠ 审批 Plan（含 dangerous 步骤）",
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(80, 150, 220),
+                egui::Color32::from_rgb(30, 40, 50),
+                egui::Color32::from_rgb(180, 220, 255),
+                "📋 审批 Plan",
+            )
+        };
+
+        egui::Window::new(header_icon)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(560.0)
+            .max_height(500.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .stroke(egui::Stroke::new(2.0, stroke_color))
+                    .fill(bg),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_width(420.0);
+                ui.add_space(4.0);
+                ui.colored_label(header_color, format!("📝 Summary：{summary}"));
+                ui.add_space(8.0);
+                ui.label(format!("共 {} 步：", steps.len()));
+                ui.add_space(4.0);
+
+                // 步骤列表（可滚动）
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for (i, step) in steps.iter().enumerate() {
+                            ui.add_space(2.0);
+                            let is_dangerous = step.safety == "dangerous";
+                            let marker = if is_dangerous { "⚠ DANGEROUS" } else { "✓ safe" };
+                            let marker_color = if is_dangerous {
+                                egui::Color32::from_rgb(255, 120, 100)
+                            } else {
+                                egui::Color32::from_rgb(160, 220, 160)
+                            };
+                            ui.horizontal(|ui| {
+                                ui.label(format!("[{}]", i + 1));
+                                ui.colored_label(marker_color, marker);
+                                ui.strong(&step.tool);
+                            });
+                            if !step.args_preview.is_empty() {
+                                ui.label(format!("  args: {}", step.args_preview));
+                            }
+                            ui.label(format!("  → {}", step.why));
+                            ui.separator();
+                        }
+                    });
+
+                ui.add_space(8.0);
+                if has_dangerous {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 150, 100),
+                        "本 plan 含 dangerous 步骤 —— 批准后**每个 dangerous 工具**仍会再单独弹窗确认。",
+                    );
+                    ui.add_space(4.0);
+                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_sized([130.0, 30.0], egui::Button::new("✅ Approve"))
+                        .clicked()
+                    {
+                        chosen = Some(PlanResponse::Approve);
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized([130.0, 30.0], egui::Button::new("❌ Reject"))
+                        .clicked()
+                    {
+                        chosen = Some(PlanResponse::Reject);
+                    }
+                });
+                ui.add_space(4.0);
+            });
+
+        if let Some(response) = chosen {
+            if let Some(pending) = self.pending_plan.take() {
                 let _ = pending.responder.send(response);
             }
         }
