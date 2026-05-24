@@ -9,6 +9,7 @@ pub mod log_viewer;
 pub mod power_actions;
 pub mod prompts_file;
 pub mod settings_dialog;
+pub mod skills;
 pub mod status_bar;
 pub mod system_launchers;
 
@@ -21,5 +22,6 @@ pub use log_viewer::open_log_dir;
 pub use power_actions::{draw_power_confirmation_dialog, PowerAction};
 pub use prompts_file::{scan_user_prompts, UserPrompt};
 pub use settings_dialog::{draw_settings_dialog, SettingsAction, SettingsBuffer};
+pub use skills::{scan_skills, Skill};
 pub use status_bar::StatusBarState;
 pub use system_launchers::{launch_cmd, launch_file_manager};

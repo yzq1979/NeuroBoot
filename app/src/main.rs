@@ -29,8 +29,8 @@ use tools::ToolRegistry;
 use ui::{
     draw_power_confirmation_dialog, draw_settings_dialog, install_chinese_fonts, launch_cmd,
     launch_file_manager, load_path_as_attached, open_log_dir, pick_image_files, render_message,
-    scan_user_prompts, AttachedImage, ChatMessage, CommonMarkCache, PowerAction, SettingsAction,
-    SettingsBuffer, StatusBarState, UserPrompt,
+    scan_skills, scan_user_prompts, AttachedImage, ChatMessage, CommonMarkCache, PowerAction,
+    SettingsAction, SettingsBuffer, Skill, StatusBarState, UserPrompt,
 };
 
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -115,6 +115,33 @@ const DEFAULT_SYSTEM_PROMPT: &str = r##"# 身份
 - ❌ 跳过证据收集直接建议跑 `chkdsk C: /f /r`（用户没问到这一步）
 "##;
 
+/// v2 Stage 7.1：「一键全面检查」预设 prompt。点按钮注入；agent 跑 8~10 个只读工具组合。
+const FULL_CHECK_PROMPT: &str = "请帮我做一次系统全面体检，**并行**调用以下工具，最后给出结构化报告：\n\
+\n\
+1. `read_system_info` —— 系统配置和最后启动时间\n\
+2. `list_disks` + `list_partitions` + `list_volumes` —— 硬盘+分区+卷状态\n\
+3. `read_ip_config` + `list_network_adapters` —— 网络配置\n\
+4. `list_processes_top` (sort_by='memory', top_n=10) —— 内存占用 top 10\n\
+5. `list_services` (status='Running') —— 运行中的服务概览\n\
+6. `read_event_log_errors` (hours=48, max_events=20) —— 最近 48 小时严重错误\n\
+7. `list_minidumps` —— 蓝屏 dump 文件清单\n\
+8. `list_recent_shutdowns` (max_events=15) —— 最近关机/重启事件\n\
+\n\
+报告格式（markdown）：\n\
+\n\
+## 🟢 健康项\n\
+列出运行正常的子系统（CPU/RAM/磁盘/网络/服务等）。\n\
+\n\
+## ⚠ 需关注\n\
+列出有 warning 但还可工作的（如磁盘 > 85%、内存占用高、个别错误事件等）。\n\
+\n\
+## 🔴 异常 / 建议立刻处理\n\
+列出 Health=Unhealthy / 频繁蓝屏 / 系统目录错误等严重问题。\n\
+\n\
+## 下一步建议\n\
+每个 🔴 / ⚠ 项给一个**具体可行**的下一步动作（如「跑 sfc /scannow」「检查电源」「打开 X:\\\\Windows\\\\Minidump 看 dump」），\
+**但只是建议** —— 不主动调任何 dangerous 工具，让用户决定。";
+
 /// 内置快捷问题（PE 无 IME 中文输入兜底）。点按钮把预设 prompt 填入输入框。
 const QUICK_PROMPTS: &[(&str, &str)] = &[
     (
@@ -193,6 +220,12 @@ struct NeuroBootApp {
     cancel_flag: Arc<AtomicBool>,
     /// v2 Stage 4.3 只读模式：true 时 dangerous 工具完全没注册；顶栏显示徽章警示
     readonly_mode: bool,
+    /// v2 Stage 7.3 取证模式：蕴含 readonly + 额外限制（disk read-only mount 等由 PE 启动配置控制）
+    forensic_mode: bool,
+    /// v2 Stage 7.2 加载的 skills（启动时扫一次）
+    skills: Vec<Skill>,
+    /// 当前激活的 skill 索引（None = 不注入 skill；Some(i) = 用 skills[i] 增量到 system prompt）
+    active_skill_idx: Option<usize>,
 }
 
 impl Default for NeuroBootApp {
@@ -205,8 +238,14 @@ impl Default for NeuroBootApp {
             probe_hint,
         } = detect_endpoints(DEFAULT_ENDPOINT, DEFAULT_MODEL);
 
-        // v2 Stage 4.3: 检测 --readonly CLI flag（也支持 env NEUROBOOT_READONLY=1）
-        let readonly_mode = std::env::args().any(|a| a == "--readonly")
+        // v2 Stage 4.3 + 7.3: 检测 --readonly / --forensic CLI flag
+        // forensic 蕴含 readonly（取证场景更严格）
+        let forensic_mode = std::env::args().any(|a| a == "--forensic")
+            || std::env::var("NEUROBOOT_FORENSIC")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+        let readonly_mode = forensic_mode
+            || std::env::args().any(|a| a == "--readonly")
             || std::env::var("NEUROBOOT_READONLY")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);
@@ -297,6 +336,9 @@ impl Default for NeuroBootApp {
             md_cache: CommonMarkCache::default(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             readonly_mode,
+            forensic_mode,
+            skills: scan_skills(),
+            active_skill_idx: None,
         }
     }
 }
@@ -420,11 +462,25 @@ impl eframe::App for NeuroBootApp {
                 ui.weak("·");
                 ui.label(format!("{} ({})", self.active.label, self.active.endpoint));
                 ui.weak(format!("· {} 个工具", self.tool_registry.len()));
-                if self.readonly_mode {
+                if self.forensic_mode {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 200, 120),
+                        "· 🔬 取证模式",
+                    );
+                } else if self.readonly_mode {
                     ui.colored_label(
                         egui::Color32::from_rgb(120, 200, 120),
                         "· 🔒 只读模式",
                     );
+                }
+                // v2 Stage 7.2: 当前激活 skill 显示
+                if let Some(i) = self.active_skill_idx {
+                    if let Some(s) = self.skills.get(i) {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(170, 170, 220),
+                            format!("· {} ", s.name),
+                        );
+                    }
                 }
                 if let Some(alt) = &self.inactive {
                     if !busy {
@@ -598,6 +654,17 @@ impl NeuroBootApp {
                     }
                 });
             }
+            // v2 Stage 7.1: 一键全面检查（高频救援场景的入口）
+            ui.separator();
+            ui.add_enabled_ui(!busy, |ui| {
+                if ui
+                    .small_button("🔍 全面检查")
+                    .on_hover_text("注入一份「请并行调多个只读诊断工具收集系统状态」的 prompt，让 agent 跑一轮完整诊断")
+                    .clicked()
+                {
+                    self.input_buffer = FULL_CHECK_PROMPT.to_string();
+                }
+            });
         });
 
         if !self.user_prompts.is_empty() {
@@ -614,6 +681,47 @@ impl NeuroBootApp {
                                 let label = format!("[{}] {}", p.label, preview);
                                 if ui.selectable_label(false, label).clicked() {
                                     self.input_buffer = p.text.clone();
+                                }
+                            }
+                        });
+                });
+            });
+        }
+        // v2 Stage 7.2: skill 下拉框（如果扫到了 skills）
+        if !self.skills.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak("Skill:");
+                ui.add_enabled_ui(!busy, |ui| {
+                    let current_text = match self.active_skill_idx.and_then(|i| self.skills.get(i)) {
+                        Some(s) => s.name.clone(),
+                        None => "(无 skill / 用默认 system prompt)".to_owned(),
+                    };
+                    egui::ComboBox::from_id_salt("skills_combo")
+                        .selected_text(current_text)
+                        .width(360.0)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(self.active_skill_idx.is_none(), "(无 skill)")
+                                .clicked()
+                            {
+                                self.active_skill_idx = None;
+                            }
+                            let skills_snapshot: Vec<(String, String)> = self
+                                .skills
+                                .iter()
+                                .map(|s| (s.name.clone(), s.description.clone()))
+                                .collect();
+                            for (i, (name, desc)) in skills_snapshot.iter().enumerate() {
+                                let label = if desc.is_empty() {
+                                    name.clone()
+                                } else {
+                                    format!("{name} — {desc}")
+                                };
+                                if ui
+                                    .selectable_label(self.active_skill_idx == Some(i), label)
+                                    .clicked()
+                                {
+                                    self.active_skill_idx = Some(i);
                                 }
                             }
                         });
@@ -743,11 +851,30 @@ impl NeuroBootApp {
         // 新一轮 agent 任务前重置 cancel 标志
         self.cancel_flag.store(false, Ordering::Relaxed);
 
+        // v2 Stage 7.2: skill 增量注入 system prompt（如选了 skill）
+        let mut system_prompt = self.system_prompt.clone();
+        if let Some(skill) = self.active_skill_idx.and_then(|i| self.skills.get(i)) {
+            system_prompt.push_str("\n\n---\n\n# 当前激活 skill: ");
+            system_prompt.push_str(&skill.name);
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&skill.body);
+        }
+        // v2 Stage 7.3: 取证模式额外约束
+        if self.forensic_mode {
+            system_prompt.push_str("\n\n---\n\n# 🔬 取证模式（强约束）\n\n\
+                你正在取证模式下运行。**所有磁盘视作证据**：\n\
+                - 绝对不写盘（已通过 readonly 屏蔽所有 dangerous 工具）\n\
+                - 不建议任何修复操作\n\
+                - 重点：发现异常 + 记录 + 截图保留证据，**不动它**\n\
+                - 用户的目的是「保全现场后取证分析」，不是修复\n\
+                如果用户要求修复，提醒「你在取证模式，要修复请重启进非取证模式」");
+        }
+
         let job = AgentJob {
             endpoint: self.active.endpoint.clone(),
             model: self.active.model.clone(),
             api_key: self.active.api_key.clone(),
-            system_prompt: self.system_prompt.clone(),
+            system_prompt,
             messages: self.messages.clone(),
             tool_registry: Arc::clone(&self.tool_registry),
             cancel: Arc::clone(&self.cancel_flag),
@@ -836,14 +963,25 @@ impl NeuroBootApp {
 
         let mut chosen: Option<ConfirmationResponse> = None;
 
-        egui::Window::new("确认执行危险工具")
+        // v2 Stage 7.4: 红色边框 + 更显眼背景，强化「这是危险操作」视觉信号
+        let red_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 60, 60));
+        let bg = egui::Color32::from_rgb(50, 30, 30);
+        egui::Window::new("⚠ 确认执行危险工具")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .stroke(red_stroke)
+                    .fill(bg),
+            )
             .show(ctx, |ui| {
                 ui.set_min_width(420.0);
                 ui.add_space(4.0);
-                ui.label(format!("Agent 想调用危险工具：{tool_name}"));
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 220, 100),
+                    format!("Agent 想调用危险工具：{tool_name}"),
+                );
                 ui.add_space(6.0);
                 ui.label("参数（JSON）：");
                 ui.code(&arguments);
