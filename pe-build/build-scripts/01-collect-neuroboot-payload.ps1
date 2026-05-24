@@ -1,4 +1,4 @@
-# 01-collect-neuroboot-payload.ps1
+﻿# 01-collect-neuroboot-payload.ps1
 # 阶段 6 PE 集成第一步：把 NeuroBoot.exe + Mesa 软件渲染 DLL 收集到
 # pe-build\payload\neuroboot\，作为 PE 集成时拷进 PE 镜像的源目录。
 #

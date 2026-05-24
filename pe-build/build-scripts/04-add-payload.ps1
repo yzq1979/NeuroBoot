@@ -1,4 +1,4 @@
-# 04-add-payload.ps1
+﻿# 04-add-payload.ps1
 # Stage 6.5: Copy NeuroBoot + llama.cpp + Qwen GGUF into the mounted PE,
 # write startnet.cmd to auto-launch NeuroBoot on PE boot.
 # Pure English. Admin required (mount dir owned by admin).
