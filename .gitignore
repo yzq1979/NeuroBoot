@@ -24,6 +24,7 @@ pe-build/source-iso/
 pe-build/workspace/
 pe-build/output/*.iso
 pe-build/build-all.log
+pe-build/build-all.log.*
 pe-build/admin-wrapper.ps1
 pe-build/admin-debug.log
 pe-build/test-admin-result.txt
